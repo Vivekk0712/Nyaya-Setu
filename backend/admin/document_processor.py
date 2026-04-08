@@ -118,6 +118,8 @@ class DocumentProcessor:
             
             # Process each chunk
             successful_chunks = 0
+            embeddings_batch = []
+            
             for i, chunk in enumerate(chunks):
                 print(f"Processing chunk {i+1}/{len(chunks)}")
                 
@@ -129,34 +131,40 @@ class DocumentProcessor:
                 # Extract metadata
                 section = self.extract_section_number(chunk)
                 
-                # Insert into database
-                try:
-                    embed_data = {
-                        'content': chunk,
-                        'metadata': {
-                            'doc_type': doc_type,
-                            'filename': filename,
-                            'chunk_index': i,
-                            'section': section,
-                            'upload_id': upload_id,
-                            'uploaded_by': user_id
-                        },
-                        'embedding': embedding
-                    }
-                    
-                    async with httpx.AsyncClient() as client:
-                        resp = await client.post(
-                            f"{supabase_url}/rest/v1/legal_embeddings",
-                            json=embed_data,
-                            headers=headers
-                        )
-                        if resp.status_code < 400:
-                            successful_chunks += 1
-                        else:
-                            print(f"Error inserting chunk {i}: {resp.text}")
-                            
-                except Exception as e:
-                    print(f"Error inserting chunk {i}: {e}")
+                # Add to batch
+                embeddings_batch.append({
+                    'content': chunk,
+                    'metadata': {
+                        'doc_type': doc_type,
+                        'filename': filename,
+                        'chunk_index': i,
+                        'section': section,
+                        'upload_id': upload_id,
+                        'uploaded_by': user_id
+                    },
+                    'embedding': embedding
+                })
+                
+                # Insert in batches of 50 for better performance
+                if len(embeddings_batch) >= 50 or i == len(chunks) - 1:
+                    try:
+                        async with httpx.AsyncClient(timeout=30.0) as client:
+                            resp = await client.post(
+                                f"{supabase_url}/rest/v1/legal_embeddings",
+                                json=embeddings_batch,
+                                headers=headers
+                            )
+                            if resp.status_code < 400:
+                                successful_chunks += len(embeddings_batch)
+                                print(f"Inserted batch of {len(embeddings_batch)} chunks")
+                            else:
+                                print(f"Error inserting batch: {resp.text}")
+                        
+                        embeddings_batch = []  # Clear batch
+                        
+                    except Exception as e:
+                        print(f"Error inserting batch: {e}")
+                        embeddings_batch = []
             
             # Update upload record
             async with httpx.AsyncClient() as client:
