@@ -264,10 +264,104 @@ LEGAL SECTIONS VIOLATED:
                         "Prefer": "return=minimal"
                     }
                     payload = {"status": "drafted", "draft_content": draft_text}
+
                     async with httpx.AsyncClient() as client:
                         await client.patch(url, json=payload, headers=headers)
                 except Exception:
                     pass
+                    
+            return {"draft_text": draft_text, "pdf_url": None, "case_id": case_id, "success": True}
+        except Exception as e:
+            print(f"[Drafter] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"success": False, "error": str(e), "draft_text": None, "case_id": case_id}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # EMAIL & PDF UTILITIES
+    # ─────────────────────────────────────────────────────────────────────────
+    async def send_email_with_pdf(self, to_email: str, draft_content: str, case_id: str) -> bool:
+        """Generate PDF of the draft and email it."""
+        import os
+        import smtplib
+        from email.message import EmailMessage
+        import tempfile
+        
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.utils import simpleSplit
+            
+            # 1. Generate PDF
+            pdf_path = os.path.join(tempfile.gettempdir(), f"FIR_Draft_{case_id[:8]}.pdf")
+            c = canvas.Canvas(pdf_path, pagesize=letter)
+            width, height = letter
+            c.setFont("Helvetica", 12)
+            
+            y = height - 50
+            margin = 50
+            
+            # Simple text wrap logic
+            for line in draft_content.split('\n'):
+                # Strip markdown asterisks for plain PDF
+                clean_line = line.replace("**", "")
+                if not clean_line.strip():
+                    y -= 15
+                    continue
+                    
+                chunks = simpleSplit(clean_line, "Helvetica", 12, width - (margin * 2))
+                for chunk in chunks:
+                    if y < 50:
+                        c.showPage()
+                        c.setFont("Helvetica", 12)
+                        y = height - 50
+                    c.drawString(margin, y, chunk)
+                    y -= 15
+                
+            c.save()
+            print(f"[Email] PDF generated locally at {pdf_path}")
+            
+            # 2. Email Logic
+            smtp_user = os.getenv('SMTP_USER')
+            smtp_pass = os.getenv('SMTP_PASSWORD')
+            smtp_host = os.getenv('SMTP_HOST', 'smtp.gmail.com')
+            smtp_port = int(os.getenv('SMTP_PORT', 587))
+            
+            if not smtp_user or not smtp_pass:
+                # Mock Dispatch for local testing if no credentials are provided
+                print(f"==================================================")
+                print(f"[MOCK EMAIL DISPATCH]")
+                print(f"TO: {to_email}")
+                print(f"SUBJECT: Nyaya-Setu: FIR Draft Ready for Review")
+                print(f"ATTACHMENT: FIR_Draft_{case_id[:8]}.pdf (Generated)")
+                print(f"(Add SMTP_USER and SMTP_PASSWORD to .env for real emails)")
+                print(f"==================================================")
+                return True
+                
+            # Real SMTP Dispatch
+            msg = EmailMessage()
+            msg['Subject'] = f'Nyaya-Setu: Formal FIR Draft for Review [{case_id[:8]}]'
+            msg['From'] = smtp_user
+            msg['To'] = to_email
+            msg.set_content(f"Dear Officer / User,\n\nPlease find attached the AI drafted FIR for case ID {case_id}.\n\nRegards,\nNyaya-Setu System")
+            
+            with open(pdf_path, 'rb') as f:
+                pdf_data = f.read()
+            msg.add_attachment(pdf_data, maintype='application', subtype='pdf', filename=f"FIR_Draft_{case_id[:8]}.pdf")
+            
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+                
+            print(f"[Email] Successfully sent email to {to_email}")
+            return True
+            
+        except Exception as e:
+            print(f"[Email] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
             return {"draft_text": draft_text, "pdf_url": None, "case_id": case_id, "success": True}
         except Exception as e:

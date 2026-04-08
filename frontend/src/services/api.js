@@ -46,6 +46,30 @@ export const api = {
     return response.json()
   },
 
+  // Update manual draft
+  updateDraft: async (caseId, draftContent) => {
+    const headers = getAuthHeader()
+    const response = await fetch(`${API_BASE}/api/cases/${caseId}/draft`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ draft_content: draftContent })
+    })
+    if (!response.ok) throw new Error('Failed to save draft edit')
+    return response.json()
+  },
+
+  // Email draft
+  emailDraft: async (caseId, email) => {
+    const headers = getAuthHeader()
+    const response = await fetch(`${API_BASE}/api/cases/${caseId}/email`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ email })
+    })
+    if (!response.ok) throw new Error('Failed to email draft')
+    return response.json()
+  },
+
   // Get cases
   getCases: async () => {
     const headers = getAuthHeader()

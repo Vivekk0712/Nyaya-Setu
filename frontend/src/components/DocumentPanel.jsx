@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Download, PenLine, FileText, Loader2, Sparkles, CheckCircle, Maximize2, X } from "lucide-react";
+import { Download, PenLine, FileText, Loader2, Sparkles, CheckCircle, Maximize2, X, Printer, Edit3, Save, Mail } from "lucide-react";
 import { Button } from "./ui/Button";
 import { useAuth } from "../contexts/AuthContext";
 import { api } from "../services/api";
@@ -10,6 +10,9 @@ const DocumentPanel = ({ caseId, readyToDraft }) => {
   const [isDrafting, setIsDrafting] = useState(false);
   const [loadingCase, setLoadingCase] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isEmailing, setIsEmailing] = useState(false);
 
   // Load existing draft if any
   useEffect(() => {
@@ -61,6 +64,40 @@ const DocumentPanel = ({ caseId, readyToDraft }) => {
     URL.revokeObjectURL(url);
   };
 
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const handleSaveDraft = async () => {
+    if (!caseId) return;
+    try {
+      setIsSaving(true);
+      await api.updateDraft(caseId, draftContent);
+      setIsEditing(false);
+    } catch (err) {
+      console.error("Failed to save draft:", err);
+      alert("Failed to save your edits. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleEmailOfficer = async () => {
+    if (!caseId) return;
+    const email = window.prompt("Enter the Officer's Email ID to send this Draft:", user?.email || "");
+    if (!email) return;
+    try {
+      setIsEmailing(true);
+      await api.emailDraft(caseId, email);
+      alert("Email dispatched successfully! Check backend console for mock logs if SMTP is not configured.");
+    } catch (err) {
+      console.error("Failed to email draft:", err);
+      alert("Failed to email draft. Please check console.");
+    } finally {
+      setIsEmailing(false);
+    }
+  };
+
   if (!caseId) {
     return (
       <div className="flex flex-col h-full items-center justify-center text-muted-foreground p-6 text-center">
@@ -72,25 +109,48 @@ const DocumentPanel = ({ caseId, readyToDraft }) => {
 
   return (
     <div className={`flex flex-col bg-background relative overflow-hidden ${isFullscreen ? 'fixed inset-0 z-50 w-full h-full' : 'h-full'}`}>
-      <div className="px-4 py-3 border-b border-border bg-card/50 backdrop-blur-sm z-10 flex justify-between items-center">
+      <div className="px-4 py-3 border-b border-border bg-card/50 backdrop-blur-sm z-10 flex justify-between items-center print:hidden">
         <div>
           <h2 className="text-sm font-semibold text-foreground">Document Workspace</h2>
           <p className="text-xs text-muted-foreground">Auto-generated FIR Draft</p>
         </div>
-        <div className="flex items-center gap-3">
-          {draftContent && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-success/10 text-success">
+        <div className="flex items-center gap-2 md:gap-3">
+          {draftContent && !isEditing && (
+            <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-success/10 text-success mr-2">
               <CheckCircle className="h-3 w-3" /> Ready
             </span>
           )}
+          
           {draftContent && (
-            <button 
-              onClick={() => setIsFullscreen(!isFullscreen)}
-              className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-md transition-colors"
-              title={isFullscreen ? "Close Fullscreen" : "Fullscreen View"}
-            >
-              {isFullscreen ? <X className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-            </button>
+             <>
+               {isEditing ? (
+                 <Button size="sm" onClick={handleSaveDraft} disabled={isSaving} className="gap-2 h-8 px-3">
+                   {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                   <span className="hidden sm:inline">Save Edits</span>
+                 </Button>
+               ) : (
+                 <>
+                   <Button size="sm" variant="outline" onClick={() => setIsEditing(true)} className="gap-2 h-8 px-3 bg-card border-border hover:bg-secondary">
+                     <Edit3 className="h-3.5 w-3.5" />
+                     <span className="hidden sm:inline">Edit</span>
+                   </Button>
+                   <Button size="sm" variant="outline" onClick={handlePrint} className="gap-2 h-8 px-3 bg-card border-border hover:bg-secondary hidden sm:flex">
+                     <Printer className="h-3.5 w-3.5" />
+                     Print
+                   </Button>
+                 </>
+               )}
+               
+               <div className="h-4 w-px bg-border mx-1 hidden sm:block"></div>
+               
+               <button 
+                 onClick={() => setIsFullscreen(!isFullscreen)}
+                 className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-md transition-colors flex-shrink-0"
+                 title={isFullscreen ? "Close Fullscreen" : "Fullscreen View"}
+               >
+                 {isFullscreen ? <X className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+               </button>
+             </>
           )}
         </div>
       </div>
@@ -101,25 +161,42 @@ const DocumentPanel = ({ caseId, readyToDraft }) => {
         </div>
       ) : draftContent ? (
         <>
-          <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-secondary/30">
-            <div className="bg-card rounded-xl border border-border shadow-sm p-6 md:p-10 max-w-2xl mx-auto font-serif text-[15px] leading-relaxed text-foreground">
-              {draftContent.split('\n').map((line, i) => {
-                if (!line.trim()) return <div key={i} className="h-4" />;
-                const parts = line.split(/\*\*(.*?)\*\*/g);
-                return (
-                  <p key={i} className="mb-2">
-                    {parts.map((part, j) => 
-                      j % 2 === 1 ? <strong key={j} className="font-bold">{part}</strong> : part
-                    )}
-                  </p>
-                );
-              })}
+          <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-secondary/30 print:p-0 print:bg-white relative">
+            <div className="bg-card rounded-xl border border-border shadow-sm p-6 md:p-10 max-w-2xl mx-auto font-serif text-[15px] leading-relaxed text-foreground print:border-none print:shadow-none print:max-w-none print:p-0 print:m-0">
+              {isEditing ? (
+                <textarea
+                  className="w-full min-h-[60vh] bg-transparent border-none outline-none font-serif text-[15px] leading-relaxed resize-y text-foreground focus:ring-0 p-0"
+                  value={draftContent}
+                  onChange={(e) => setDraftContent(e.target.value)}
+                />
+              ) : (
+                draftContent.split('\n').map((line, i) => {
+                  if (!line.trim()) return <div key={i} className="h-4" />;
+                  const parts = line.split(/\*\*(.*?)\*\*/g);
+                  return (
+                    <p key={i} className="mb-2">
+                      {parts.map((part, j) => 
+                        j % 2 === 1 ? <strong key={j} className="font-bold">{part}</strong> : part
+                      )}
+                    </p>
+                  );
+                })
+              )}
             </div>
           </div>
-          <div className="p-3 border-t border-border flex gap-2 bg-card">
+          <div className="p-3 border-t border-border flex gap-2 bg-card print:hidden">
             <Button variant="outline" className="flex-1 gap-2" onClick={handleDownload}>
               <Download className="h-4 w-4" />
               Download TXT
+            </Button>
+            <Button 
+              variant="outline" 
+              className="flex-1 gap-2 border-primary/20 bg-primary/5 hover:bg-primary/10 text-primary"
+              onClick={handleEmailOfficer}
+              disabled={isEmailing}
+            >
+              {isEmailing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+              Email Officer (PDF)
             </Button>
             <Button className="flex-1 gap-2 border-primary/20 bg-primary/10 text-primary hover:bg-primary/20">
               <PenLine className="h-4 w-4" />

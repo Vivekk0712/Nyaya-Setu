@@ -94,6 +94,12 @@ class ChatResponse(BaseModel):
     citations: List[dict] = []
     case_id: Optional[str] = None
 
+class UpdateDraftRequest(BaseModel):
+    draft_content: str
+
+class EmailDraftRequest(BaseModel):
+    email: EmailStr
+
 # ============================================================================
 # AUTH ENDPOINTS
 # ============================================================================
@@ -284,6 +290,54 @@ async def update_case_status(case_id: str, status: str, current_user: dict = Dep
         return {"success": True, "case": response.data}
     except Exception as e:
         print(f"Update case error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.patch("/api/cases/{case_id}/draft")
+async def update_case_draft(case_id: str, request: UpdateDraftRequest, current_user: dict = Depends(get_current_user)):
+    """Update case draft manually after editing"""
+    try:
+        import httpx
+        import os
+        url = f"{os.getenv('SUPABASE_URL')}/rest/v1/cases?id=eq.{case_id}&user_id=eq.{current_user['id']}"
+        headers = {
+            "apikey": os.getenv("SUPABASE_KEY"),
+            "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation"
+        }
+        payload = {"draft_content": request.draft_content}
+        
+        async with httpx.AsyncClient() as client:
+            resp = await client.patch(url, json=payload, headers=headers)
+            if resp.status_code >= 400:
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            
+            return {"success": True, "case": resp.json()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Update draft error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/cases/{case_id}/email")
+async def email_case_draft(case_id: str, request: EmailDraftRequest, current_user: dict = Depends(get_current_user)):
+    """Email the generated PDF draft"""
+    try:
+        from agents.drafter import DraftingAgent
+        # Fetch the draft content
+        response = db.table('cases').select('draft_content').eq('id', case_id).eq('user_id', current_user['id']).single()
+        draft_content = response.data.get('draft_content')
+        if not draft_content:
+            raise HTTPException(status_code=404, detail="Draft content not found for this case")
+            
+        drafter = DraftingAgent(db)
+        success = await drafter.send_email_with_pdf(request.email, draft_content, case_id)
+        
+        return {"success": success}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Email draft error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/generate-draft", response_model=DraftResponse)

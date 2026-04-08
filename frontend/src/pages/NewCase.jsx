@@ -81,7 +81,7 @@ const NewCase = () => {
         </div>
         <div className="flex-1 flex flex-col overflow-hidden relative">
           {/* Tracker toggle */}
-          <div className="absolute top-3 right-3 z-20">
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20">
             <Button
               size="sm"
               variant={trackerOpen ? "default" : "outline"}
@@ -95,7 +95,7 @@ const NewCase = () => {
 
           {/* Tracker dropdown */}
           {trackerOpen && (
-            <div className="absolute top-12 right-3 z-30 w-80 bg-card border border-border rounded-xl shadow-lg animate-fade-in">
+            <div className="absolute top-12 left-1/2 -translate-x-1/2 z-30 w-80 bg-card border border-border rounded-xl shadow-lg animate-fade-in">
               <div className="flex items-center justify-between px-4 pt-3">
                 <span className="text-sm font-semibold text-foreground">Case Tracker</span>
                 <button onClick={() => setTrackerOpen(false)} className="text-muted-foreground hover:text-foreground">
