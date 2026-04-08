@@ -78,6 +78,7 @@ const ChatPanel = ({ caseId, onCaseCreated, onReadyToDraft }) => {
         role: "bot",
         text: response.data.message,
         relevant_laws: response.data.relevant_laws,
+        citations: response.data.citations || [],
       };
 
       setMessages((prev) => [...prev, botMessage]);
@@ -183,17 +184,26 @@ const ChatPanel = ({ caseId, onCaseCreated, onReadyToDraft }) => {
                   {line}
                 </p>
               ))}
-              {msg.relevant_laws && msg.relevant_laws.length > 0 && (
+              {/* Citations — prefer rich citations, fall back to plain relevant_laws */}
+              {(msg.citations?.length > 0 || (msg.relevant_laws && msg.relevant_laws.length > 0)) && (
                 <div className="mt-2 pt-2 border-t border-border/30">
-                  <p className="text-xs font-semibold mb-1">Relevant Sections:</p>
-                  <div className="flex flex-wrap gap-1">
-                    {msg.relevant_laws.map((law, idx) => (
-                      <span
+                  <p className="text-xs font-semibold mb-1.5 text-muted-foreground">Referenced Sections:</p>
+                  <div className="flex flex-col gap-1.5">
+                    {(msg.citations?.length > 0 ? msg.citations : msg.relevant_laws.map(l => ({ section: l, source: null }))).map((c, idx) => (
+                      <div
                         key={idx}
-                        className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-full"
+                        className="flex items-start gap-1.5 text-xs px-2 py-1 bg-primary/10 text-primary rounded-lg"
                       >
-                        {law}
-                      </span>
+                        <span className="mt-0.5">📌</span>
+                        <div>
+                          <span className="font-semibold">{c.section || c}</span>
+                          {c.source && (
+                            <span className="block text-[10px] text-muted-foreground italic mt-0.5">
+                              {c.source}
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </div>

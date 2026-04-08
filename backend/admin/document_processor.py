@@ -48,19 +48,30 @@ class DocumentProcessor:
         return chunks
     
     def extract_section_number(self, text: str) -> str:
-        """Extract section number from text"""
+        """Extract section number/identifier from legal text chunk."""
+        # Strip to first 300 chars — section headers appear near the top of chunks
+        head = text[:300]
+
         patterns = [
-            r'Section\s+(\d+[A-Z]?)',
-            r'Sec\.\s+(\d+[A-Z]?)',
+            # "Section 308" / "section 308A" — explicit label
+            r'[Ss]ection\s+(\d+[A-Z]?)',
+            # "Sec. 308"
+            r'Sec\.\s*(\d+[A-Z]?)',
+            # "§ 308"
             r'§\s*(\d+[A-Z]?)',
+            # "Chapter 12"
             r'Chapter\s+(\d+)',
+            # "308. Criminal intimidation" / "308A. Something" — number-first (BNS/BNSS format)
+            r'^(\d{1,3}[A-Z]?)\.\s+[A-Z]',
         ]
-        
+
         for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
+            match = re.search(pattern, head, re.IGNORECASE | re.MULTILINE)
             if match:
-                return match.group(0)
-        
+                # Return normalised label
+                num = match.group(1) if match.lastindex and match.lastindex >= 1 else match.group(0)
+                return f"Section {num}"
+
         return "Unknown"
     
     def generate_embedding(self, text: str) -> List[float]:
