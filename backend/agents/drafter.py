@@ -13,7 +13,7 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 class DraftingAgent:
     def __init__(self, supabase_client: Client):
         self.supabase = supabase_client
-        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        self.model = genai.GenerativeModel('gemini-2.5-flash')
     
     def fetch_mock_kyc(self, user_id: str) -> Dict:
         """Mock DigiLocker KYC fetch"""

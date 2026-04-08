@@ -384,7 +384,7 @@ You may have exceeded free tier limits.
 ```python
 import google.generativeai as genai
 genai.configure(api_key="your-key")
-model = genai.GenerativeModel('gemini-2.0-flash-exp')
+model = genai.GenerativeModel('gemini-2.5-flash')
 response = model.generate_content("Hello")
 print(response.text)
 ```

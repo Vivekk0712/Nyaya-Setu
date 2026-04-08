@@ -81,6 +81,17 @@ class DraftResponse(BaseModel):
     pdf_url: str
     case_id: str
 
+class ChatRequest(BaseModel):
+    message: str
+    case_id: Optional[str] = None
+    language: str = "en"
+
+class ChatResponse(BaseModel):
+    message: str
+    relevant_laws: List[str]
+    needs_clarification: bool
+    ready_to_draft: bool
+
 # ============================================================================
 # AUTH ENDPOINTS
 # ============================================================================
@@ -271,6 +282,123 @@ async def update_case_status(case_id: str, status: str, current_user: dict = Dep
         return {"success": True, "case": response.data}
     except Exception as e:
         print(f"Update case error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# CHAT ENDPOINTS (Agent 1 - Interpreter)
+# ============================================================================
+
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat_with_interpreter(request: ChatRequest, current_user: dict = Depends(get_current_user)):
+    """Interactive chat with the legal interpreter agent"""
+    try:
+        # Import interpreter agent
+        try:
+            from agents.interpreter import InterpreterAgent
+            interpreter = InterpreterAgent(db)
+        except Exception as e:
+            print(f"Error loading interpreter: {e}")
+            # Return mock response if agent not available
+            return ChatResponse(
+                message="I understand your concern. Let me analyze this legal issue... (Agent initialization pending)",
+                relevant_laws=["BNS Section 126(2)", "BNS Section 316"],
+                needs_clarification=False,
+                ready_to_draft=False
+            )
+        
+        result = await interpreter.chat(
+            user_id=str(current_user['id']),
+            message=request.message,
+            case_id=request.case_id,
+            language=request.language
+        )
+        
+        # If this is the first message and no case exists, create one
+        if not request.case_id and not result.get('needs_clarification', True):
+            case_data = {
+                "user_id": str(current_user['id']),
+                "incident_description": request.message,
+                "legal_sections": result.get("relevant_laws", []),
+                "status": "intake",
+                "conversation_summary": result.get("message", "")
+            }
+            
+            import httpx
+            headers = {
+                "apikey": db_key,
+                "Authorization": f"Bearer {db_key}",
+                "Content-Type": "application/json",
+                "Prefer": "return=representation"
+            }
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{os.getenv('SUPABASE_URL')}/rest/v1/cases",
+                    json=case_data,
+                    headers=headers
+                )
+                
+                if response.status_code < 400:
+                    result_data = response.json()
+                    case_id = result_data[0]['id'] if isinstance(result_data, list) else result_data['id']
+                    result['case_id'] = case_id
+        
+        return ChatResponse(
+            message=result["message"],
+            relevant_laws=result.get("relevant_laws", []),
+            needs_clarification=result.get("needs_clarification", False),
+            ready_to_draft=result.get("ready_to_draft", False)
+        )
+    except Exception as e:
+        print(f"Chat error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/chat/history/{case_id}")
+async def get_chat_history(case_id: str, current_user: dict = Depends(get_current_user)):
+    """Get chat history for a case"""
+    try:
+        from agents.interpreter import InterpreterAgent
+        interpreter = InterpreterAgent(db)
+        messages = await interpreter.get_chat_messages(str(current_user['id']), case_id)
+        return {"messages": messages}
+    except Exception as e:
+        print(f"Get chat history error: {e}")
+        return {"messages": []}
+
+@app.delete("/api/chat/history/{case_id}")
+async def delete_chat_history(case_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete chat history from database"""
+    try:
+        from agents.interpreter import InterpreterAgent
+        interpreter = InterpreterAgent(db)
+        success = await interpreter.delete_chat_history(str(current_user['id']), case_id)
+        return {"success": success, "message": "Chat history deleted" if success else "Failed to delete"}
+    except Exception as e:
+        print(f"Delete chat history error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/chat/clear")
+async def clear_chat_session(case_id: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    """Clear chat session for user (in-memory only)"""
+    try:
+        from agents.interpreter import InterpreterAgent
+        interpreter = InterpreterAgent(db)
+        interpreter.clear_chat_session(str(current_user['id']), case_id)
+        return {"success": True, "message": "Chat session cleared"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/chat/summary")
+async def get_conversation_summary(case_id: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    """Get summary of conversation"""
+    try:
+        from agents.interpreter import InterpreterAgent
+        interpreter = InterpreterAgent(db)
+        summary = await interpreter.summarize_conversation(str(current_user['id']), case_id)
+        return summary
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================

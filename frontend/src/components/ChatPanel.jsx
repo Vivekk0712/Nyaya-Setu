@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { Mic, Send, Bot, User } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Mic, Send, Bot, User, Trash2 } from "lucide-react";
 import { Button } from "./ui/Button";
+import api from "../services/api";
 
 const initialMessages = [
   {
@@ -10,13 +11,50 @@ const initialMessages = [
   },
 ];
 
-const ChatPanel = () => {
+const ChatPanel = ({ caseId, onCaseCreated, onReadyToDraft }) => {
   const [messages, setMessages] = useState(initialMessages);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [currentCaseId, setCurrentCaseId] = useState(caseId);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const messagesEndRef = useRef(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Load chat history when case ID is available
+  useEffect(() => {
+    const loadHistory = async () => {
+      if (currentCaseId && !historyLoaded) {
+        try {
+          const response = await api.get(`/api/chat/history/${currentCaseId}`);
+          if (response.data.messages && response.data.messages.length > 0) {
+            const formattedMessages = response.data.messages.map(msg => ({
+              id: msg.id,
+              role: msg.role,
+              text: msg.text,
+              relevant_laws: msg.relevant_laws
+            }));
+            setMessages([...initialMessages, ...formattedMessages]);
+          }
+          setHistoryLoaded(true);
+        } catch (error) {
+          console.error("Error loading chat history:", error);
+          setHistoryLoaded(true);
+        }
+      }
+    };
+
+    loadHistory();
+  }, [currentCaseId, historyLoaded]);
 
   const handleSend = async () => {
-    if (!input.trim()) return;
+    if (!input.trim() || isLoading) return;
 
     const userMessage = {
       id: Date.now(),
@@ -28,16 +66,46 @@ const ChatPanel = () => {
     setInput("");
     setIsLoading(true);
 
-    // TODO: Integrate with backend API
-    setTimeout(() => {
+    try {
+      const response = await api.post("/api/chat", {
+        message: input,
+        case_id: currentCaseId,
+        language: "en"
+      });
+
       const botMessage = {
         id: Date.now() + 1,
         role: "bot",
-        text: "I understand your concern. Let me analyze this legal issue and identify the relevant sections...",
+        text: response.data.message,
+        relevant_laws: response.data.relevant_laws,
       };
+
       setMessages((prev) => [...prev, botMessage]);
+
+      // If a new case was created
+      if (response.data.case_id && !currentCaseId) {
+        setCurrentCaseId(response.data.case_id);
+        if (onCaseCreated) {
+          onCaseCreated(response.data.case_id);
+        }
+      }
+
+      // If ready to draft
+      if (response.data.ready_to_draft && onReadyToDraft) {
+        onReadyToDraft(currentCaseId || response.data.case_id);
+      }
+
+    } catch (error) {
+      console.error("Chat error:", error);
+      const errorMessage = {
+        id: Date.now() + 1,
+        role: "bot",
+        text: "I apologize, but I'm having trouble connecting right now. Please try again in a moment.",
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   const handleKeyPress = (e) => {
@@ -47,11 +115,46 @@ const ChatPanel = () => {
     }
   };
 
+  const handleClearHistory = async () => {
+    if (!currentCaseId) return;
+    
+    if (!window.confirm("Are you sure you want to delete this conversation? This cannot be undone.")) {
+      return;
+    }
+
+    try {
+      await api.delete(`/api/chat/history/${currentCaseId}`);
+      setMessages(initialMessages);
+      setHistoryLoaded(false);
+    } catch (error) {
+      console.error("Error clearing chat history:", error);
+      alert("Failed to clear chat history. Please try again.");
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-border">
-        <h2 className="text-sm font-semibold text-foreground">AI Legal Interpreter</h2>
-        <p className="text-xs text-muted-foreground">Powered by Nyaya-Setu Agent</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">AI Legal Interpreter</h2>
+            <p className="text-xs text-muted-foreground">Powered by Nyaya-Setu Agent</p>
+            {currentCaseId && (
+              <p className="text-xs text-primary mt-1">Case ID: {currentCaseId}</p>
+            )}
+          </div>
+          {currentCaseId && messages.length > 1 && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleClearHistory}
+              className="gap-1.5 text-destructive hover:text-destructive"
+              title="Delete conversation"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Messages */}
@@ -80,6 +183,21 @@ const ChatPanel = () => {
                   {line}
                 </p>
               ))}
+              {msg.relevant_laws && msg.relevant_laws.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-border/30">
+                  <p className="text-xs font-semibold mb-1">Relevant Sections:</p>
+                  <div className="flex flex-wrap gap-1">
+                    {msg.relevant_laws.map((law, idx) => (
+                      <span
+                        key={idx}
+                        className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-full"
+                      >
+                        {law}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -97,12 +215,18 @@ const ChatPanel = () => {
             </div>
           </div>
         )}
+        <div ref={messagesEndRef} />
       </div>
 
       {/* Input */}
       <div className="p-3 border-t border-border">
         <div className="flex items-center gap-2 bg-secondary rounded-xl p-1.5">
-          <Button size="icon" variant="ghost" className="rounded-full flex-shrink-0 h-10 w-10 text-primary">
+          <Button 
+            size="icon" 
+            variant="ghost" 
+            className="rounded-full flex-shrink-0 h-10 w-10 text-primary"
+            title="Voice input (coming soon)"
+          >
             <Mic className="h-5 w-5" />
           </Button>
           <input
@@ -112,12 +236,13 @@ const ChatPanel = () => {
             onKeyPress={handleKeyPress}
             placeholder="Describe your legal issue..."
             className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none py-2 min-w-0"
+            disabled={isLoading}
           />
           <Button 
             size="icon" 
             className="rounded-full flex-shrink-0 h-10 w-10"
             onClick={handleSend}
-            disabled={!input.trim()}
+            disabled={!input.trim() || isLoading}
           >
             <Send className="h-4 w-4" />
           </Button>

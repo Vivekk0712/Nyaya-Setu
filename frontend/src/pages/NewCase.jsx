@@ -13,13 +13,31 @@ const tabs = [
 const NewCase = () => {
   const [activeTab, setActiveTab] = useState("chat");
   const [trackerOpen, setTrackerOpen] = useState(false);
+  const [currentCaseId, setCurrentCaseId] = useState(null);
+  const [readyToDraft, setReadyToDraft] = useState(false);
+
+  const handleCaseCreated = (caseId) => {
+    setCurrentCaseId(caseId);
+    console.log("Case created:", caseId);
+  };
+
+  const handleReadyToDraft = (caseId) => {
+    setReadyToDraft(true);
+    setCurrentCaseId(caseId);
+    // Optionally switch to document tab
+    setActiveTab("document");
+  };
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden relative">
       {/* Desktop split layout */}
       <div className="hidden md:flex flex-1 overflow-hidden">
         <div className="w-[420px] border-r border-border flex flex-col">
-          <ChatPanel />
+          <ChatPanel 
+            caseId={currentCaseId}
+            onCaseCreated={handleCaseCreated}
+            onReadyToDraft={handleReadyToDraft}
+          />
         </div>
         <div className="flex-1 flex flex-col overflow-hidden relative">
           {/* Tracker toggle button */}
@@ -44,12 +62,12 @@ const NewCase = () => {
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <TrackerPanel />
+              <TrackerPanel caseId={currentCaseId} />
             </div>
           )}
 
           <div className="flex-1 overflow-hidden">
-            <DocumentPanel />
+            <DocumentPanel caseId={currentCaseId} readyToDraft={readyToDraft} />
           </div>
         </div>
       </div>
@@ -78,13 +96,21 @@ const NewCase = () => {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <TrackerPanel />
+            <TrackerPanel caseId={currentCaseId} />
           </div>
         )}
 
         <div className="flex-1 overflow-hidden">
-          {activeTab === "chat" && <ChatPanel />}
-          {activeTab === "document" && <DocumentPanel />}
+          {activeTab === "chat" && (
+            <ChatPanel 
+              caseId={currentCaseId}
+              onCaseCreated={handleCaseCreated}
+              onReadyToDraft={handleReadyToDraft}
+            />
+          )}
+          {activeTab === "document" && (
+            <DocumentPanel caseId={currentCaseId} readyToDraft={readyToDraft} />
+          )}
         </div>
 
         <div className="border-t border-border bg-card flex">

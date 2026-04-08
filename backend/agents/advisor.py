@@ -9,7 +9,7 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 class AdvisoryAgent:
     def __init__(self, supabase_client: Client):
         self.supabase = supabase_client
-        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        self.model = genai.GenerativeModel('gemini-2.5-flash')
     
     async def check_pending_cases(self) -> List[Dict]:
         """Check for cases that need follow-up"""

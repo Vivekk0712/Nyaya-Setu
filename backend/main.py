@@ -50,6 +50,17 @@ class IntakeResponse(BaseModel):
     relevant_laws: List[str]
     case_id: str
 
+class ChatRequest(BaseModel):
+    message: str
+    case_id: Optional[str] = None
+    language: str = "en"
+
+class ChatResponse(BaseModel):
+    message: str
+    relevant_laws: List[str]
+    needs_clarification: bool
+    ready_to_draft: bool
+
 class DraftRequest(BaseModel):
     case_id: str
     user_kyc: dict
@@ -107,6 +118,77 @@ async def intake_incident(request: IntakeRequest, user = Depends(get_current_use
             relevant_laws=result["relevant_laws"],
             case_id=case_id
         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat_with_interpreter(request: ChatRequest, user = Depends(get_current_user)):
+    """Interactive chat with the legal interpreter agent"""
+    try:
+        result = await interpreter.chat(
+            user_id=user['id'],
+            message=request.message,
+            case_id=request.case_id,
+            language=request.language
+        )
+        
+        # If this is the first message and no case exists, create one
+        if not request.case_id and not result.get('needs_clarification', True):
+            case_data = {
+                "user_id": user['id'],
+                "incident_description": request.message,
+                "legal_sections": result.get("relevant_laws", []),
+                "status": "intake",
+                "conversation_summary": result.get("message", "")
+            }
+            
+            case_response = supabase.table('cases').insert(case_data).execute()
+            case_id = case_response.data[0]['id']
+            result['case_id'] = case_id
+        
+        return ChatResponse(
+            message=result["message"],
+            relevant_laws=result.get("relevant_laws", []),
+            needs_clarification=result.get("needs_clarification", False),
+            ready_to_draft=result.get("ready_to_draft", False)
+        )
+    except Exception as e:
+        print(f"Chat error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/chat/clear")
+async def clear_chat_session(case_id: Optional[str] = None, user = Depends(get_current_user)):
+    """Clear chat session for user (in-memory only)"""
+    try:
+        interpreter.clear_chat_session(user['id'], case_id)
+        return {"success": True, "message": "Chat session cleared"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/chat/history/{case_id}")
+async def delete_chat_history(case_id: str, user = Depends(get_current_user)):
+    """Delete chat history from database"""
+    try:
+        success = await interpreter.delete_chat_history(user['id'], case_id)
+        return {"success": success, "message": "Chat history deleted" if success else "Failed to delete"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/chat/history/{case_id}")
+async def get_chat_history(case_id: str, user = Depends(get_current_user)):
+    """Get chat history for a case"""
+    try:
+        messages = await interpreter.get_chat_messages(user['id'], case_id)
+        return {"messages": messages}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/chat/summary")
+async def get_conversation_summary(case_id: Optional[str] = None, user = Depends(get_current_user)):
+    """Get summary of conversation"""
+    try:
+        summary = await interpreter.summarize_conversation(user['id'], case_id)
+        return summary
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
