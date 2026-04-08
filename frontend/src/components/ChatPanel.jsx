@@ -38,7 +38,8 @@ const ChatPanel = ({ caseId, onCaseCreated, onReadyToDraft }) => {
               id: msg.id,
               role: msg.role,
               text: msg.text,
-              relevant_laws: msg.relevant_laws
+              relevant_laws: msg.relevant_laws,
+              citations: msg.citations || [],
             }));
             setMessages([...initialMessages, ...formattedMessages]);
           }

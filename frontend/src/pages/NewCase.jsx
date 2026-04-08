@@ -1,46 +1,86 @@
 import { useState } from "react";
-import { MessageSquare, FileText, Activity, X } from "lucide-react";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import { MessageSquare, FileText, Activity, X, Plus } from "lucide-react";
 import { Button } from "../components/ui/Button";
 import ChatPanel from "../components/ChatPanel";
 import DocumentPanel from "../components/DocumentPanel";
 import TrackerPanel from "../components/TrackerPanel";
 
 const tabs = [
-  { id: "chat", label: "Chat", icon: MessageSquare },
+  { id: "chat",     label: "Chat",     icon: MessageSquare },
   { id: "document", label: "Document", icon: FileText },
 ];
 
 const NewCase = () => {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+
+  // If opened from CaseHistory, ?caseId=... pre-loads that case's chat
+  const urlCaseId = searchParams.get("caseId") || null;
+  const isExistingCase = !!urlCaseId;
+
   const [activeTab, setActiveTab] = useState("chat");
   const [trackerOpen, setTrackerOpen] = useState(false);
-  const [currentCaseId, setCurrentCaseId] = useState(null);
+  const [currentCaseId, setCurrentCaseId] = useState(urlCaseId);
   const [readyToDraft, setReadyToDraft] = useState(false);
 
   const handleCaseCreated = (caseId) => {
     setCurrentCaseId(caseId);
-    console.log("Case created:", caseId);
   };
 
   const handleReadyToDraft = (caseId) => {
     setReadyToDraft(true);
     setCurrentCaseId(caseId);
-    // Optionally switch to document tab
     setActiveTab("document");
+  };
+
+  const handleNewCase = () => {
+    // Navigate to /new-case with no caseId param → fresh session
+    navigate("/new-case", { replace: false });
+    // Force a re-mount by navigating away then back isn't clean,
+    // so just reload the page for now
+    window.location.href = "/new-case";
   };
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden relative">
+
+      {/* Top bar: title + New Case button */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-card/50 backdrop-blur-sm">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="h-4 w-4 text-primary" />
+          <span className="text-sm font-semibold text-foreground">
+            {isExistingCase ? "Existing Case" : "New Case"}
+          </span>
+          {currentCaseId && (
+            <span className="text-xs font-mono text-muted-foreground bg-secondary px-2 py-0.5 rounded-md">
+              {currentCaseId.slice(0, 8)}…
+            </span>
+          )}
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handleNewCase}
+          className="gap-1.5 text-xs"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New Case
+        </Button>
+      </div>
+
       {/* Desktop split layout */}
       <div className="hidden md:flex flex-1 overflow-hidden">
         <div className="w-[420px] border-r border-border flex flex-col">
-          <ChatPanel 
+          <ChatPanel
+            key={currentCaseId || "new"}   // re-mount when case changes
             caseId={currentCaseId}
             onCaseCreated={handleCaseCreated}
             onReadyToDraft={handleReadyToDraft}
           />
         </div>
         <div className="flex-1 flex flex-col overflow-hidden relative">
-          {/* Tracker toggle button */}
+          {/* Tracker toggle */}
           <div className="absolute top-3 right-3 z-20">
             <Button
               size="sm"
@@ -53,7 +93,7 @@ const NewCase = () => {
             </Button>
           </div>
 
-          {/* Tracker dropdown panel */}
+          {/* Tracker dropdown */}
           {trackerOpen && (
             <div className="absolute top-12 right-3 z-30 w-80 bg-card border border-border rounded-xl shadow-lg animate-fade-in">
               <div className="flex items-center justify-between px-4 pt-3">
@@ -74,7 +114,6 @@ const NewCase = () => {
 
       {/* Mobile tabbed layout */}
       <div className="flex flex-col flex-1 overflow-hidden md:hidden">
-        {/* Mobile tracker button */}
         <div className="flex items-center justify-end px-3 py-2 border-b border-border bg-card">
           <Button
             size="sm"
@@ -87,7 +126,6 @@ const NewCase = () => {
           </Button>
         </div>
 
-        {/* Mobile tracker panel */}
         {trackerOpen && (
           <div className="bg-card border-b border-border animate-fade-in">
             <div className="flex items-center justify-between px-4 pt-2">
@@ -102,7 +140,8 @@ const NewCase = () => {
 
         <div className="flex-1 overflow-hidden">
           {activeTab === "chat" && (
-            <ChatPanel 
+            <ChatPanel
+              key={currentCaseId || "new"}
               caseId={currentCaseId}
               onCaseCreated={handleCaseCreated}
               onReadyToDraft={handleReadyToDraft}
