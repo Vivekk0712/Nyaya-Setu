@@ -65,7 +65,35 @@ const DocumentPanel = ({ caseId, readyToDraft }) => {
   };
 
   const handlePrint = () => {
-    window.print();
+    const formattedHtml = draftContent.split('\n').map(line => {
+      if (!line.trim()) return '<br/>';
+      const parts = line.split(/\*\*(.*?)\*\*/g);
+      const lineHtml = parts.map((part, j) => j % 2 === 1 ? `<strong>${part}</strong>` : part).join('');
+      return `<p style="margin-bottom: 8px; margin-top: 0;">${lineHtml}</p>`;
+    }).join('');
+
+    const windowPrint = window.open('', '', 'left=0,top=0,width=800,height=900,toolbar=0,scrollbars=0,status=0');
+    windowPrint.document.write(`
+      <html>
+        <head>
+          <title>Nyaya-Setu - FIR Draft</title>
+          <style>
+            @page { margin: 20mm; }
+            body { font-family: 'Times New Roman', Times, serif; font-size: 13pt; line-height: 1.5; color: black; max-width: 800px; margin: 0 auto; padding: 20px; }
+            strong { font-weight: bold; }
+          </style>
+        </head>
+        <body>
+          ${formattedHtml}
+        </body>
+      </html>
+    `);
+    windowPrint.document.close();
+    windowPrint.focus();
+    setTimeout(() => {
+      windowPrint.print();
+      windowPrint.close();
+    }, 250);
   };
 
   const handleSaveDraft = async () => {
@@ -108,7 +136,10 @@ const DocumentPanel = ({ caseId, readyToDraft }) => {
   }
 
   return (
-    <div className={`flex flex-col bg-background relative overflow-hidden ${isFullscreen ? 'fixed inset-0 z-50 w-full h-full' : 'h-full'}`}>
+    <div 
+      className={`flex flex-col bg-background overflow-hidden ${isFullscreen ? 'z-[9999]' : 'relative h-full'}`}
+      style={isFullscreen ? { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', margin: 0, padding: 0 } : {}}
+    >
       <div className="px-4 py-3 border-b border-border bg-card/50 backdrop-blur-sm z-10 flex justify-between items-center print:hidden">
         <div>
           <h2 className="text-sm font-semibold text-foreground">Document Workspace</h2>
