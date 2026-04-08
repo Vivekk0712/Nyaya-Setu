@@ -1,4 +1,3 @@
-import google.generativeai as genai
 from pypdf import PdfReader
 from typing import List, Dict
 import os
@@ -6,10 +5,9 @@ import re
 from datetime import datetime
 from sentence_transformers import SentenceTransformer
 
-# Initialize the embedding model (runs locally, much faster!)
+# Initialize the embedding model (runs locally)
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 class DocumentProcessor:
     def __init__(self, supabase_client):
@@ -145,8 +143,8 @@ class DocumentProcessor:
                     'embedding': embedding
                 })
                 
-                # Insert in batches of 50 for better performance
-                if len(embeddings_batch) >= 50 or i == len(chunks) - 1:
+                # Insert in batches of 100 for better performance
+                if len(embeddings_batch) >= 100 or i == len(chunks) - 1:
                     try:
                         async with httpx.AsyncClient(timeout=30.0) as client:
                             resp = await client.post(

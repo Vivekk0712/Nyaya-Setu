@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { Scale, ShieldCheck, Link as LinkIcon, LogOut } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Scale, ShieldCheck, Link as LinkIcon, LogOut, Shield } from "lucide-react";
 import { NavLink as RouterNavLink, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "./ui/Button";
 import { useAuth } from "../contexts/AuthContext";
+import { api } from "../services/api";
 
 const navLinks = [
   { to: "/dashboard", label: "Dashboard" },
@@ -15,14 +16,36 @@ const navLinks = [
 const Navbar = () => {
   const [lang, setLang] = useState("en");
   const [digiConnected, setDigiConnected] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+
+  // Check admin status
+  useEffect(() => {
+    const checkAdmin = async () => {
+      try {
+        const response = await api.checkAdminStatus();
+        setIsAdmin(response.is_admin);
+      } catch (error) {
+        console.error("Error checking admin status:", error);
+      }
+    };
+    
+    if (user) {
+      checkAdmin();
+    }
+  }, [user]);
 
   const handleLogout = () => {
     logout();
     navigate("/");
   };
+
+  // Add admin link if user is admin
+  const allNavLinks = isAdmin 
+    ? [...navLinks, { to: "/admin", label: "Admin", icon: Shield }]
+    : navLinks;
 
   return (
     <nav className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
@@ -83,19 +106,22 @@ const Navbar = () => {
 
       {/* Tab Navigation */}
       <div className="flex overflow-x-auto px-4 md:px-6 -mb-px scrollbar-none">
-        {navLinks.map((link) => {
+        {allNavLinks.map((link) => {
           const isActive = location.pathname === link.to || 
             (link.to !== "/dashboard" && location.pathname.startsWith(link.to));
+          const Icon = link.icon;
+          
           return (
             <RouterNavLink
               key={link.to}
               to={link.to}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
                 isActive
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
               }`}
             >
+              {Icon && <Icon className="h-4 w-4" />}
               {link.label}
             </RouterNavLink>
           );

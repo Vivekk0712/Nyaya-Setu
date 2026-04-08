@@ -1,4 +1,5 @@
-import google.generativeai as genai
+import vertexai
+from vertexai.generative_models import GenerativeModel
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -8,12 +9,13 @@ import os
 from datetime import datetime
 from typing import Dict
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Vertex AI is initialized in the main interpreter module;
+# we just use GenerativeModel here directly.
 
 class DraftingAgent:
     def __init__(self, supabase_client: Client):
         self.supabase = supabase_client
-        self.model = genai.GenerativeModel('gemini-2.5-flash')
+        self.model = GenerativeModel('gemini-2.5-flash')
     
     def fetch_mock_kyc(self, user_id: str) -> Dict:
         """Mock DigiLocker KYC fetch"""

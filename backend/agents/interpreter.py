@@ -1,325 +1,502 @@
-import google.generativeai as genai
-from supabase import Client
+import vertexai
+from vertexai.generative_models import GenerativeModel, Content, Part
 import os
 from typing import List, Dict, Optional
 import json
 from datetime import datetime
+from sentence_transformers import SentenceTransformer
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Initialize embedding model (local, fast, free!)
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# Initialize Vertex AI
+vertexai.init(
+    project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+    location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FIR SYSTEM PROMPT
+# ─────────────────────────────────────────────────────────────────────────────
+FIR_SYSTEM_PROMPT = """You are a Digital Legal Aid Officer for Indian citizens, part of the Nyaya-Setu platform.
+Your job is TWO-FOLD:
+1. Identify the exact BNS/IPC/CrPC/BNSS sections that apply to the citizen's problem (ONLY cite sections present in the legal context provided to you).
+2. Conduct a structured intake interview to collect ALL information required to draft a formal FIR or legal complaint.
+
+═══ MANDATORY FIR INFORMATION TO COLLECT ═══
+Before marking [READY_TO_DRAFT], you MUST have collected:
+  • Complainant's full name
+  • Complainant's complete address
+  • Complainant's phone number
+  • Exact date and time of the incident
+  • Exact place/location of the incident
+  • Complete description of what happened (who, what, when, where, how)
+  • Name/description of the accused person(s)
+  • Any witness names (or confirm there are none)
+  • Evidence available (photos, messages, receipts, CCTV, etc.)
+  • Specific relief sought (refund, criminal action, compensation, etc.)
+
+═══ CITATION RULES ═══
+- ONLY cite sections that appear in the [LEGAL CONTEXT] block.
+- Use this exact format for EVERY cited section:
+  📌 **[Section identifier]** — *[Document filename]* — [One sentence explaining why it applies]
+- If a section number appears in the content text, extract and use it.
+- If multiple sections apply, list all of them.
+- Do NOT invent or hallucinate section numbers.
+
+═══ CONVERSATION RULES ═══
+- Be warm, empathetic, and speak in simple language.
+- Ask for 1-2 missing details at a time.
+- NEVER re-ask for information the user has already provided.
+- After collecting ALL required information, end your response with exactly:
+  [READY_TO_DRAFT]
+- If you still need more information, end with:
+  [NEEDS_CLARIFICATION]
+
+═══ RESPONSE FORMAT ═══
+1. Empathetic acknowledgment
+2. Applicable laws with 📌 citations (from context only)
+3. Plain-language explanation of what those laws mean
+4. Next 1-2 questions to collect missing FIR details
+5. Brief note on what happens after all details are collected
+"""
+
+# Minimum similarity score to include a chunk in context
+MIN_SIMILARITY = 0.15
+
 
 class InterpreterAgent:
-    def __init__(self, supabase_client: Client):
+    def __init__(self, supabase_client):
         self.supabase = supabase_client
-        self.model = genai.GenerativeModel('gemini-2.5-flash')
-        self.chat_sessions = {}  # Store chat sessions per user (in-memory cache)
-    
-    async def retrieve_relevant_laws(self, query: str, top_k: int = 3) -> List[Dict]:
-        """Query Supabase pgvector for relevant legal sections"""
+        self.model = GenerativeModel('gemini-2.5-flash')
+        # session_key -> { "chat": chat_obj, "message_count": int }
+        self.chat_sessions: Dict[str, dict] = {}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # RAG
+    # ─────────────────────────────────────────────────────────────────────────
+    async def retrieve_relevant_laws(self, query: str, top_k: int = 7) -> List[Dict]:
+        """Query pgvector for relevant legal chunks with similarity filtering."""
         try:
-            # Generate embedding for the query
-            embedding_result = genai.embed_content(
-                model="models/gemini-embedding-001",  # Correct format with models/ prefix
-                content=query,
-                task_type="retrieval_query"
-            )
-            query_embedding = embedding_result['embedding']
-            
-            # Query Supabase for similar vectors
+            query_embedding = embedding_model.encode(query, convert_to_numpy=True).tolist()
+
+            # Call the RPC — our custom client is synchronous, handles execute() internally
             response = self.supabase.rpc(
                 'match_legal_documents',
-                {
-                    'query_embedding': query_embedding,
-                    'match_count': top_k
-                }
-            ).execute()
-            
-            return response.data if response.data else []
+                {'query_embedding': query_embedding, 'match_count': top_k}
+            )
+
+            # Handle both supabase-py (needs .execute()) and our custom client
+            if hasattr(response, 'execute') and callable(response.execute):
+                response = response.execute()
+
+            results = response.data if response.data else []
+
+            # Filter by minimum similarity and log each result
+            filtered = []
+            print(f"\n[RAG] Query: '{query[:70]}...'")
+            print(f"[RAG] Retrieved {len(results)} raw results:")
+            for r in results:
+                meta = r.get('metadata', {})
+                sim = r.get('similarity', 0)
+                section = meta.get('section', 'Unknown')
+                filename = meta.get('filename', 'unknown')
+                content_snippet = r.get('content', '')[:80].replace('\n', ' ')
+                print(f"  score={sim:.3f} | {section} | {filename} | {content_snippet}...")
+                if sim >= MIN_SIMILARITY:
+                    filtered.append(r)
+
+            print(f"[RAG] After filter (>={MIN_SIMILARITY}): {len(filtered)} chunks kept\n")
+            return filtered
+
         except Exception as e:
-            print(f"Error retrieving laws: {e}")
-            # Return empty list if RAG fails - agent will still work without it
+            print(f"[RAG] Error: {e}")
+            import traceback
+            traceback.print_exc()
             return []
-    
-    async def load_chat_history(self, user_id: str, case_id: str) -> List[Dict]:
-        """Load chat history from database"""
+
+    def _format_law_context(self, laws: List[Dict]) -> str:
+        """Format retrieved chunks into rich, citable context."""
+        if not laws:
+            return "(No relevant legal sections found in the uploaded documents for this query.)"
+
+        parts = []
+        for i, law in enumerate(laws, 1):
+            meta = law.get('metadata', {})
+            section = meta.get('section', 'Unknown')
+            doc_type = meta.get('doc_type', 'Law')
+            filename = meta.get('filename', 'document')
+            content = law.get('content', '').strip()
+            similarity = law.get('similarity', 0)
+
+            # Provide up to 700 chars of real content per chunk
+            content_excerpt = content[:700] + ("..." if len(content) > 700 else "")
+
+            parts.append(
+                f"--- [CHUNK {i}] ---\n"
+                f"Section Identifier: {section}\n"
+                f"Document Type: {doc_type}\n"
+                f"Source File: {filename}\n"
+                f"Similarity Score: {similarity:.3f}\n"
+                f"Content:\n{content_excerpt}\n"
+            )
+
+        return "\n".join(parts)
+
+    def _extract_citation_list(self, laws: List[Dict]) -> List[Dict]:
+        """Build structured citation list for API response."""
+        citations = []
+        seen = set()
+        for law in laws:
+            meta = law.get('metadata', {})
+            section = meta.get('section', 'Unknown')
+            doc_type = meta.get('doc_type', '')
+            filename = meta.get('filename', '')
+            content_snippet = law.get('content', '')[:150].replace('\n', ' ')
+            key = f"{section}|{filename}"
+            if key not in seen:
+                seen.add(key)
+                citations.append({
+                    'section': section,
+                    'doc_type': doc_type,
+                    'source': filename,
+                    'snippet': content_snippet,
+                    'relevance': round(law.get('similarity', 0), 3)
+                })
+        return citations
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SESSION MANAGEMENT WITH DB HISTORY SEEDING
+    # ─────────────────────────────────────────────────────────────────────────
+    def _session_key(self, user_id: str, case_id: str) -> str:
+        return f"{user_id}_{case_id}"
+
+    async def get_or_create_chat_session(self, user_id: str, case_id: str) -> dict:
+        """
+        Get or create a chat session. On creation, seeds Gemini with the last
+        8 messages from the DB so context survives server restarts.
+        """
+        key = self._session_key(user_id, case_id)
+
+        if key not in self.chat_sessions:
+            print(f"[Session] Creating new session for {key}")
+
+            # Load last 8 messages from DB to seed history
+            history = await self._load_history_as_gemini_content(user_id, case_id, limit=8)
+
+            chat = self.model.start_chat(history=history)
+            msg_count = len([h for h in history if h.role == "user"])
+
+            self.chat_sessions[key] = {
+                "chat": chat,
+                "message_count": msg_count,
+            }
+            print(f"[Session] Seeded with {len(history)} history entries ({msg_count} user turns)")
+
+        return self.chat_sessions[key]
+
+    async def _load_history_as_gemini_content(
+        self, user_id: str, case_id: str, limit: int = 8
+    ) -> List[Content]:
+        """Load the last N messages from DB and convert to Gemini Content objects."""
         try:
+            raw = await self._fetch_db_messages(user_id, case_id, limit=limit)
+            history = []
+            for msg in raw:
+                role = "user" if msg.get('role') == 'user' else "model"
+                text = msg.get('message', '')
+                if text.strip():
+                    history.append(Content(role=role, parts=[Part.from_text(text)]))
+            return history
+        except Exception as e:
+            print(f"[Session] Could not load history: {e}")
+            return []
+
+    async def _fetch_db_messages(self, user_id: str, case_id: str, limit: int = 50) -> List[Dict]:
+        """Fetch recent chat messages from DB for a given case."""
+        try:
+            # Try RPC first (preserves order)
             response = self.supabase.rpc(
                 'get_chat_history',
-                {
-                    'p_case_id': case_id,
-                    'p_user_id': user_id,
-                    'message_limit': 50
-                }
-            ).execute()
-            
+                {'p_case_id': case_id, 'p_user_id': user_id, 'message_limit': limit}
+            )
+            if hasattr(response, 'execute') and callable(response.execute):
+                response = response.execute()
             return response.data if response.data else []
-        except Exception as e:
-            print(f"Error loading chat history: {e}")
-            return []
-    
-    async def save_message(self, user_id: str, case_id: str, role: str, message: str, 
-                          relevant_laws: List[str] = None, metadata: Dict = None):
-        """Save a chat message to database"""
+        except Exception:
+            # Fallback: direct table query
+            try:
+                response = (
+                    self.supabase
+                    .table('chat_messages')
+                    .select('*')
+                    .eq('case_id', case_id)
+                    .eq('user_id', user_id)
+                    .order('created_at', desc=False)
+                    .limit(limit)
+                    .execute()
+                )
+                return response.data if response.data else []
+            except Exception as e2:
+                print(f"[DB] Fallback history fetch failed: {e2}")
+                return []
+
+    def clear_chat_session(self, user_id: str, case_id: Optional[str] = None):
+        key = self._session_key(user_id, case_id or "")
+        self.chat_sessions.pop(key, None)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # RESPONSE PARSING
+    # ─────────────────────────────────────────────────────────────────────────
+    def _check_ready_to_draft(self, text: str) -> bool:
+        return "[READY_TO_DRAFT]" in text
+
+    def _check_needs_clarification(self, text: str) -> bool:
+        if self._check_ready_to_draft(text):
+            return False
+        return "[NEEDS_CLARIFICATION]" in text or "?" in text
+
+    def _clean_response(self, text: str) -> str:
+        return text.replace("[READY_TO_DRAFT]", "").replace("[NEEDS_CLARIFICATION]", "").strip()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # MAIN CHAT
+    # ─────────────────────────────────────────────────────────────────────────
+    async def chat(self, user_id: str, message: str,
+                   case_id: str = None, language: str = "en") -> Dict:
+        """
+        FIR intake chat. case_id must always be provided before calling.
+        Messages are always saved to DB.
+        """
         try:
-            message_data = {
+            if not case_id:
+                # Shouldn't happen — main_simple should always create a case first
+                print("[Chat] WARNING: No case_id provided — messages won't persist")
+
+            # ── Save user message ────────────────────────────────────────────
+            if case_id:
+                await self.save_message(user_id, case_id, 'user', message)
+
+            # ── Get or restore session from DB ───────────────────────────────
+            if case_id:
+                session = await self.get_or_create_chat_session(user_id, case_id)
+            else:
+                # Fallback: stateless session
+                session = {"chat": self.model.start_chat(history=[]), "message_count": 0}
+
+            chat = session["chat"]
+            session["message_count"] += 1
+            msg_num = session["message_count"]
+
+            # ── RAG ──────────────────────────────────────────────────────────
+            relevant_laws = await self.retrieve_relevant_laws(message, top_k=7)
+            laws_context = self._format_law_context(relevant_laws)
+            citations = self._extract_citation_list(relevant_laws)
+
+            # ── Build prompt ─────────────────────────────────────────────────
+            lang_str = 'Hindi' if language == 'hi' else 'English'
+
+            if msg_num == 1:
+                # First turn: inject full system prompt + law context
+                prompt = (
+                    f"{FIR_SYSTEM_PROMPT}\n\n"
+                    f"[LEGAL CONTEXT FROM UPLOADED DOCUMENTS]\n"
+                    f"{laws_context}\n\n"
+                    f"[CITIZEN'S FIRST MESSAGE]\n"
+                    f"{message}\n\n"
+                    f"Respond in {lang_str}. Begin the FIR intake."
+                )
+            else:
+                # Subsequent turns: fresh law context + reminder
+                prompt = (
+                    f"[UPDATED LEGAL CONTEXT for this message]\n"
+                    f"{laws_context}\n\n"
+                    f"[CITIZEN'S MESSAGE]\n"
+                    f"{message}\n\n"
+                    f"Continue the FIR intake in {lang_str}. "
+                    f"Use what was already collected. Ask for the next missing detail(s)."
+                )
+
+            print(f"[Gemini] Turn #{msg_num} | prompt={len(prompt)} chars | citations={len(citations)}")
+
+            # ── Call Gemini ──────────────────────────────────────────────────
+            try:
+                response = chat.send_message(prompt)
+                response_text = response.text
+                print(f"[Gemini] Response: {len(response_text)} chars")
+            except Exception as ge:
+                err = str(ge)
+                print(f"[Gemini] Error: {err}")
+                if "429" in err or "quota" in err.lower():
+                    return self._rate_limit_fallback(relevant_laws, citations)
+                raise
+
+            # ── Parse flags & clean ──────────────────────────────────────────
+            ready_to_draft = self._check_ready_to_draft(response_text)
+            needs_clarification = self._check_needs_clarification(response_text)
+            clean_response = self._clean_response(response_text)
+
+            # ── Save bot response ────────────────────────────────────────────
+            if case_id:
+                await self.save_message(
+                    user_id, case_id, 'bot', clean_response,
+                    [c['section'] for c in citations],
+                    {
+                        'needs_clarification': needs_clarification,
+                        'ready_to_draft': ready_to_draft,
+                        'citations': citations,
+                        'turn': msg_num
+                    }
+                )
+
+            return {
+                "message": clean_response,
+                "relevant_laws": [c['section'] for c in citations],
+                "laws_details": relevant_laws,
+                "citations": citations,
+                "needs_clarification": needs_clarification,
+                "ready_to_draft": ready_to_draft,
+                "case_id": case_id,
+            }
+
+        except Exception as e:
+            print(f"[Chat] Unhandled error: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "message": "I'm sorry, I encountered an error. Please try again.",
+                "relevant_laws": [], "laws_details": [], "citations": [],
+                "needs_clarification": False, "ready_to_draft": False,
+                "error": str(e)
+            }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # DB HELPERS
+    # ─────────────────────────────────────────────────────────────────────────
+    async def save_message(self, user_id: str, case_id: str, role: str,
+                           message: str, relevant_laws: List[str] = None,
+                           metadata: Dict = None):
+        try:
+            self.supabase.table('chat_messages').insert({
                 'case_id': case_id,
                 'user_id': user_id,
                 'role': role,
                 'message': message,
                 'relevant_laws': relevant_laws or [],
                 'metadata': metadata or {}
-            }
-            
-            self.supabase.table('chat_messages').insert(message_data).execute()
+            }).execute()
+            print(f"[DB] Saved {role} message for case {case_id}")
         except Exception as e:
-            print(f"Error saving message: {e}")
-    
-    def get_or_create_chat_session(self, user_id: str, case_id: Optional[str] = None):
-        """Get existing chat session or create new one"""
-        session_key = f"{user_id}_{case_id}" if case_id else user_id
-        
-        if session_key not in self.chat_sessions:
-            # Create new chat session with system instructions
-            self.chat_sessions[session_key] = self.model.start_chat(history=[])
-        
-        return self.chat_sessions[session_key]
-    
-    async def chat(self, user_id: str, message: str, case_id: Optional[str] = None, language: str = "en") -> Dict:
-        """Interactive chat with the legal interpreter"""
-        try:
-            # Get or create chat session
-            chat = self.get_or_create_chat_session(user_id, case_id)
-            
-            # Save user message to database if case_id exists
-            if case_id:
-                await self.save_message(user_id, case_id, 'user', message)
-            
-            # Retrieve relevant laws for context
-            relevant_laws = await self.retrieve_relevant_laws(message)
-            
-            # Build context from retrieved laws
-            laws_context = ""
-            if relevant_laws:
-                laws_context = "\n\nRelevant Legal Sections:\n" + "\n".join([
-                    f"- {law.get('metadata', {}).get('section', 'Unknown')}: {law.get('content', '')[:200]}..."
-                    for law in relevant_laws
-                ])
-            
-            # Create contextual prompt
-            system_context = f"""You are a compassionate Digital Public Defender helping Indian citizens understand their legal rights.
+            print(f"[DB] Error saving message: {e}")
 
-Guidelines:
-1. Speak in simple, clear language that anyone can understand
-2. Be empathetic and supportive
-3. Identify relevant laws from the Bharatiya Nyaya Sanhita (BNS) or Consumer Protection Act
-4. Explain violations in plain terms
-5. Guide users on what legal action they can take
-6. Ask clarifying questions if needed
-7. Respond in {language} language
-
-{laws_context}
-
-User's message: {message}"""
-
-            try:
-                # Send message to chat
-                response = chat.send_message(system_context)
-            except Exception as gemini_error:
-                error_str = str(gemini_error)
-                
-                # Check if it's a rate limit error
-                if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
-                    # Return a helpful message about rate limits
-                    return {
-                        "message": "I apologize, but I've reached my daily usage limit with the AI service. This typically resets within 24 hours. In the meantime, I can still help you understand that your issue may involve legal violations. Please try again later, or contact legal aid services directly at 15100 (National Legal Services Authority helpline).",
-                        "relevant_laws": [law.get('metadata', {}).get('section', 'Unknown') for law in relevant_laws] if relevant_laws else [],
-                        "laws_details": relevant_laws,
-                        "needs_clarification": False,
-                        "ready_to_draft": False,
-                        "error_type": "rate_limit"
-                    }
-                else:
-                    # Re-raise other errors
-                    raise
-            
-            # Extract relevant sections mentioned
-            relevant_sections = [law.get('metadata', {}).get('section', 'Unknown') for law in relevant_laws]
-            
-            # Check response flags
-            needs_clarification = self._check_if_needs_clarification(response.text)
-            ready_to_draft = self._check_if_ready_to_draft(response.text)
-            
-            # Save bot response to database if case_id exists
-            if case_id:
-                await self.save_message(
-                    user_id, 
-                    case_id, 
-                    'bot', 
-                    response.text,
-                    relevant_sections,
-                    {
-                        'needs_clarification': needs_clarification,
-                        'ready_to_draft': ready_to_draft
-                    }
-                )
-            
-            return {
-                "message": response.text,
-                "relevant_laws": relevant_sections,
-                "laws_details": relevant_laws,
-                "needs_clarification": needs_clarification,
-                "ready_to_draft": ready_to_draft
+    async def get_chat_messages(self, user_id: str, case_id: str) -> List[Dict]:
+        raw = await self._fetch_db_messages(user_id, case_id, limit=100)
+        return [
+            {
+                'id': msg.get('id'),
+                'role': msg.get('role'),
+                'text': msg.get('message'),
+                'relevant_laws': msg.get('relevant_laws', []),
+                'citations': msg.get('metadata', {}).get('citations', []),
+                'created_at': msg.get('created_at'),
             }
-        except Exception as e:
-            print(f"Error in chat: {e}")
-            return {
-                "message": "I apologize, but I'm having trouble processing your request right now. Please try again.",
-                "relevant_laws": [],
-                "laws_details": [],
-                "needs_clarification": False,
-                "ready_to_draft": False,
-                "error": str(e)
-            }
-    
-    def _check_if_needs_clarification(self, response: str) -> bool:
-        """Check if the response is asking for clarification"""
-        clarification_keywords = ["could you", "can you tell me", "please provide", "need more", "clarify", "?"]
-        return any(keyword in response.lower() for keyword in clarification_keywords)
-    
-    def _check_if_ready_to_draft(self, response: str) -> bool:
-        """Check if the conversation is ready to generate a draft"""
-        draft_keywords = ["shall i draft", "ready to draft", "generate a complaint", "file a complaint", "create an fir"]
-        return any(keyword in response.lower() for keyword in draft_keywords)
-    
-    async def interpret_incident(self, incident: str, language: str = "en") -> Dict:
-        """Interpret user incident and explain in simple terms (legacy method for compatibility)"""
-        
-        # Retrieve relevant laws
-        relevant_laws = await self.retrieve_relevant_laws(incident)
-        
-        # Build context from retrieved laws
-        laws_context = "\n\n".join([
-            f"Section: {law.get('metadata', {}).get('section', 'Unknown')}\n{law.get('content', '')}"
-            for law in relevant_laws
-        ])
-        
-        # Create prompt for Gemini
-        prompt = f"""You are a legal interpreter helping Indian citizens understand their rights.
+            for msg in raw
+        ]
 
-User's Incident:
-{incident}
-
-Relevant Laws from Bharatiya Nyaya Sanhita (BNS):
-{laws_context}
-
-Task:
-1. Identify which laws have been violated
-2. Explain the violation in simple, clear language
-3. Tell the user what legal action they can take
-4. Be empathetic and supportive
-
-Respond in {language} language."""
-
-        try:
-            response = self.model.generate_content(prompt)
-            
-            return {
-                "explanation": response.text,
-                "relevant_laws": [law.get('metadata', {}).get('section', 'Unknown') for law in relevant_laws],
-                "laws_details": relevant_laws
-            }
-        except Exception as e:
-            print(f"Error interpreting incident: {e}")
-            return {
-                "explanation": "Unable to process your request at this time.",
-                "relevant_laws": [],
-                "laws_details": []
-            }
-    
-    def clear_chat_session(self, user_id: str, case_id: Optional[str] = None):
-        """Clear chat session for a user (in-memory only, DB history remains)"""
-        session_key = f"{user_id}_{case_id}" if case_id else user_id
-        if session_key in self.chat_sessions:
-            del self.chat_sessions[session_key]
-    
     async def delete_chat_history(self, user_id: str, case_id: str) -> bool:
-        """Delete chat history from database"""
         try:
             response = self.supabase.rpc(
                 'delete_chat_history',
-                {
-                    'p_case_id': case_id,
-                    'p_user_id': user_id
-                }
-            ).execute()
-            
-            # Also clear in-memory session
+                {'p_case_id': case_id, 'p_user_id': user_id}
+            )
+            if hasattr(response, 'execute') and callable(response.execute):
+                response.execute()
             self.clear_chat_session(user_id, case_id)
-            
             return True
         except Exception as e:
-            print(f"Error deleting chat history: {e}")
+            print(f"[DB] Error deleting history: {e}")
             return False
-    
-    async def get_chat_messages(self, user_id: str, case_id: str) -> List[Dict]:
-        """Get formatted chat messages for display"""
-        try:
-            history = await self.load_chat_history(user_id, case_id)
-            
-            messages = []
-            for msg in history:
-                messages.append({
-                    'id': msg['id'],
-                    'role': msg['role'],
-                    'text': msg['message'],
-                    'relevant_laws': msg.get('relevant_laws', []),
-                    'created_at': msg['created_at']
-                })
-            
-            return messages
-        except Exception as e:
-            print(f"Error getting chat messages: {e}")
-            return []
-    
-    async def summarize_conversation(self, user_id: str, case_id: Optional[str] = None) -> Dict:
-        """Summarize the conversation for case filing"""
-        session_key = f"{user_id}_{case_id}" if case_id else user_id
-        
-        if session_key not in self.chat_sessions:
-            return {
-                "summary": "No conversation found",
-                "key_points": [],
-                "legal_sections": []
-            }
-        
-        try:
-            chat = self.chat_sessions[session_key]
-            
-            # Ask the model to summarize
-            summary_prompt = """Please summarize this conversation in a structured format:
-1. Brief summary of the incident
-2. Key facts and details
-3. Legal sections that apply
-4. Recommended action
 
-Format as JSON with keys: summary, key_points (array), legal_sections (array), recommended_action"""
-            
-            response = chat.send_message(summary_prompt)
-            
-            # Try to parse as JSON, fallback to text
-            try:
-                summary_data = json.loads(response.text)
-            except:
-                summary_data = {
-                    "summary": response.text,
-                    "key_points": [],
-                    "legal_sections": []
-                }
-            
-            return summary_data
-        except Exception as e:
-            print(f"Error summarizing conversation: {e}")
+    # ─────────────────────────────────────────────────────────────────────────
+    # FALLBACK
+    # ─────────────────────────────────────────────────────────────────────────
+    def _rate_limit_fallback(self, laws: List[Dict], citations: List[Dict]) -> Dict:
+        if citations:
+            laws_text = "\n".join(
+                f"• {c['section']} — {c['source']}" for c in citations[:3]
+            )
+            msg = (
+                "I understand your concern and I'm here to help.\n\n"
+                f"Based on your situation, these sections may apply:\n{laws_text}\n\n"
+                "I'm currently experiencing high demand. Please try again in a moment. "
+                "Meanwhile, you can call **15100** (National Legal Services Authority) for free legal aid."
+            )
+        else:
+            msg = (
+                "I'm currently experiencing high demand. Please try again shortly. "
+                "Meanwhile, call **15100** for free legal aid."
+            )
+        return {
+            "message": msg,
+            "relevant_laws": [c['section'] for c in citations],
+            "laws_details": laws, "citations": citations,
+            "needs_clarification": False, "ready_to_draft": False,
+            "error_type": "rate_limit"
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # LEGACY (for /api/intake)
+    # ─────────────────────────────────────────────────────────────────────────
+    async def interpret_incident(self, incident: str, language: str = "en") -> Dict:
+        laws = await self.retrieve_relevant_laws(incident, top_k=5)
+        context = self._format_law_context(laws)
+        citations = self._extract_citation_list(laws)
+        lang_str = 'Hindi' if language == 'hi' else 'English'
+
+        prompt = (
+            f"You are a legal expert for Indian citizens.\n\n"
+            f"[LEGAL CONTEXT]\n{context}\n\n"
+            f"[INCIDENT]\n{incident}\n\n"
+            f"Identify which laws were violated (cite exact sections from context), "
+            f"explain in simple terms, and state what action the complainant can take. "
+            f"Respond in {lang_str}."
+        )
+        try:
+            response = self.model.generate_content(prompt)
             return {
-                "summary": "Error generating summary",
-                "key_points": [],
-                "legal_sections": []
+                "explanation": response.text,
+                "relevant_laws": [c['section'] for c in citations],
+                "laws_details": laws
             }
+        except Exception as e:
+            print(f"[Legacy] Error: {e}")
+            return {"explanation": "Unable to process your request.", "relevant_laws": [], "laws_details": []}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # CONVERSATION SUMMARY (hand-off to drafter)
+    # ─────────────────────────────────────────────────────────────────────────
+    async def summarize_conversation(self, user_id: str, case_id: Optional[str] = None) -> Dict:
+        if not case_id:
+            return {"summary": "No case ID provided", "key_points": [], "legal_sections": []}
+        key = self._session_key(user_id, case_id)
+        if key not in self.chat_sessions:
+            return {"summary": "Session not found — may need to reload", "key_points": [], "legal_sections": []}
+
+        try:
+            chat = self.chat_sessions[key]["chat"]
+            prompt = (
+                'Summarize this legal intake conversation as JSON for the FIR drafter. '
+                'Return ONLY valid JSON — no markdown, no extra text:\n'
+                '{"summary":"","complainant":{"name":"","address":"","phone":""},'
+                '"incident":{"date":"","time":"","location":"","description":""},'
+                '"accused":{"name":"","description":""},"witnesses":[],"evidence":[],'
+                '"legal_sections":[],"relief_sought":"","ready_for_fir":false}'
+            )
+            response = chat.send_message(prompt)
+            try:
+                return json.loads(response.text)
+            except json.JSONDecodeError:
+                return {"summary": response.text, "key_points": [], "legal_sections": []}
+        except Exception as e:
+            print(f"[Summary] Error: {e}")
+            return {"summary": "Error generating summary", "key_points": [], "legal_sections": []}

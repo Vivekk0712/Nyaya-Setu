@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS legal_embeddings (
     id BIGSERIAL PRIMARY KEY,
     content TEXT NOT NULL,
     metadata JSONB,
-    embedding vector(768),  -- 768 dimensions for gemini-embedding-001
+    embedding vector(384),  -- 384 dimensions for all-MiniLM-L6-v2 (local, fast, free)
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -82,7 +82,7 @@ CREATE INDEX IF NOT EXISTS chat_messages_created_at_idx ON chat_messages(created
 
 -- Function for vector similarity search
 CREATE OR REPLACE FUNCTION match_legal_documents(
-    query_embedding vector(768),
+    query_embedding vector(384),  -- 384 dimensions for all-MiniLM-L6-v2
     match_count int DEFAULT 3
 )
 RETURNS TABLE (

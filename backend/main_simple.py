@@ -91,6 +91,8 @@ class ChatResponse(BaseModel):
     relevant_laws: List[str]
     needs_clarification: bool
     ready_to_draft: bool
+    citations: List[dict] = []
+    case_id: Optional[str] = None
 
 # ============================================================================
 # AUTH ENDPOINTS
@@ -292,62 +294,79 @@ async def update_case_status(case_id: str, status: str, current_user: dict = Dep
 async def chat_with_interpreter(request: ChatRequest, current_user: dict = Depends(get_current_user)):
     """Interactive chat with the legal interpreter agent"""
     try:
-        # Import interpreter agent
+        # ── Ensure we always have a case_id so messages persist ──────────────
+        active_case_id = request.case_id
+
+        if not active_case_id:
+            # Create a new case immediately on first message
+            import httpx as _httpx
+            _headers = {
+                "apikey": db_key,
+                "Authorization": f"Bearer {db_key}",
+                "Content-Type": "application/json",
+                "Prefer": "return=representation"
+            }
+            _case_data = {
+                "user_id": str(current_user['id']),
+                "incident_description": request.message,
+                "legal_sections": [],
+                "status": "intake",
+            }
+            async with _httpx.AsyncClient() as _client:
+                _resp = await _client.post(
+                    f"{os.getenv('SUPABASE_URL')}/rest/v1/cases",
+                    json=_case_data,
+                    headers=_headers
+                )
+                if _resp.status_code < 400:
+                    _rdata = _resp.json()
+                    active_case_id = (_rdata[0] if isinstance(_rdata, list) else _rdata)['id']
+                    print(f"[Chat] Created new case: {active_case_id}")
+                else:
+                    print(f"[Chat] Could not create case: {_resp.text}")
+
+        # ── Load interpreter (lazy, per-request; singleton would be faster) ──
         try:
             from agents.interpreter import InterpreterAgent
             interpreter = InterpreterAgent(db)
         except Exception as e:
             print(f"Error loading interpreter: {e}")
-            # Return mock response if agent not available
             return ChatResponse(
                 message="I understand your concern. Let me analyze this legal issue... (Agent initialization pending)",
                 relevant_laws=["BNS Section 126(2)", "BNS Section 316"],
                 needs_clarification=False,
                 ready_to_draft=False
             )
-        
+
         result = await interpreter.chat(
             user_id=str(current_user['id']),
             message=request.message,
-            case_id=request.case_id,
+            case_id=active_case_id,
             language=request.language
         )
-        
-        # If this is the first message and no case exists, create one
-        if not request.case_id and not result.get('needs_clarification', True):
-            case_data = {
-                "user_id": str(current_user['id']),
-                "incident_description": request.message,
-                "legal_sections": result.get("relevant_laws", []),
-                "status": "intake",
-                "conversation_summary": result.get("message", "")
-            }
-            
-            import httpx
-            headers = {
+
+        # ── Update case with discovered legal sections ────────────────────────
+        if active_case_id and result.get('relevant_laws'):
+            import httpx as _httpx2
+            _h2 = {
                 "apikey": db_key,
                 "Authorization": f"Bearer {db_key}",
                 "Content-Type": "application/json",
-                "Prefer": "return=representation"
             }
-            
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{os.getenv('SUPABASE_URL')}/rest/v1/cases",
-                    json=case_data,
-                    headers=headers
+            async with _httpx2.AsyncClient() as _c2:
+                await _c2.patch(
+                    f"{os.getenv('SUPABASE_URL')}/rest/v1/cases?id=eq.{active_case_id}",
+                    json={"legal_sections": result.get('relevant_laws', [])},
+                    headers=_h2
                 )
-                
-                if response.status_code < 400:
-                    result_data = response.json()
-                    case_id = result_data[0]['id'] if isinstance(result_data, list) else result_data['id']
-                    result['case_id'] = case_id
-        
+
         return ChatResponse(
             message=result["message"],
             relevant_laws=result.get("relevant_laws", []),
             needs_clarification=result.get("needs_clarification", False),
-            ready_to_draft=result.get("ready_to_draft", False)
+            ready_to_draft=result.get("ready_to_draft", False),
+            citations=result.get("citations", []),
+            case_id=active_case_id,
         )
     except Exception as e:
         print(f"Chat error: {e}")

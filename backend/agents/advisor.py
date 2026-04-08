@@ -1,15 +1,17 @@
-import google.generativeai as genai
+import vertexai
+from vertexai.generative_models import GenerativeModel
 from supabase import Client
 from datetime import datetime, timedelta
 import os
 from typing import List, Dict
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Vertex AI is initialized in the main interpreter module;
+# we just use GenerativeModel here directly.
 
 class AdvisoryAgent:
     def __init__(self, supabase_client: Client):
         self.supabase = supabase_client
-        self.model = genai.GenerativeModel('gemini-2.5-flash')
+        self.model = GenerativeModel('gemini-2.5-flash')
     
     async def check_pending_cases(self) -> List[Dict]:
         """Check for cases that need follow-up"""
