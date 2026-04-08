@@ -4,8 +4,12 @@ import ProtectedRoute from './components/auth/ProtectedRoute'
 import Landing from './pages/Landing'
 import Login from './components/auth/Login'
 import SignUp from './components/auth/SignUp'
-import Dashboard from './pages/Dashboard'
+import Navbar from './components/Navbar'
+import DashboardNew from './pages/DashboardNew'
 import NewCase from './pages/NewCase'
+import CaseHistory from './pages/CaseHistory'
+import Settings from './pages/Settings'
+import Help from './pages/Help'
 import CaseDetail from './pages/CaseDetail'
 import AdminPortal from './pages/AdminPortal'
 import DebugAuth from './pages/DebugAuth'
@@ -15,15 +19,21 @@ function App() {
     <AuthProvider>
       <Router>
         <Routes>
+          {/* Public routes */}
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<SignUp />} />
           <Route path="/debug-auth" element={<DebugAuth />} />
+          
+          {/* Protected routes with new UI */}
           <Route
             path="/dashboard"
             element={
               <ProtectedRoute>
-                <Dashboard />
+                <div className="flex flex-col h-screen">
+                  <Navbar />
+                  <DashboardNew />
+                </div>
               </ProtectedRoute>
             }
           />
@@ -31,7 +41,43 @@ function App() {
             path="/new-case"
             element={
               <ProtectedRoute>
-                <NewCase />
+                <div className="flex flex-col h-screen">
+                  <Navbar />
+                  <NewCase />
+                </div>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/cases"
+            element={
+              <ProtectedRoute>
+                <div className="flex flex-col h-screen">
+                  <Navbar />
+                  <CaseHistory />
+                </div>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute>
+                <div className="flex flex-col h-screen">
+                  <Navbar />
+                  <Settings />
+                </div>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/help"
+            element={
+              <ProtectedRoute>
+                <div className="flex flex-col h-screen">
+                  <Navbar />
+                  <Help />
+                </div>
               </ProtectedRoute>
             }
           />
@@ -39,7 +85,10 @@ function App() {
             path="/case/:caseId"
             element={
               <ProtectedRoute>
-                <CaseDetail />
+                <div className="flex flex-col h-screen">
+                  <Navbar />
+                  <CaseDetail />
+                </div>
               </ProtectedRoute>
             }
           />
