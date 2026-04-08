@@ -180,12 +180,23 @@ Include all the information above. Where something is [TO BE FILLED], acknowledg
             # Update case status to drafted
             if self.supabase and case_id:
                 try:
-                    result = self.supabase.table('cases').update({
-                        'status': 'drafted',
-                        'draft_content': draft_text,
-                    }).eq('id', case_id)
-                    if hasattr(result, 'execute'):
-                        result.execute()
+                    import httpx
+                    import os
+                    url = f"{os.getenv('SUPABASE_URL')}/rest/v1/cases?id=eq.{case_id}"
+                    headers = {
+                        "apikey": os.getenv("SUPABASE_KEY"),
+                        "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal"
+                    }
+                    payload = {"status": "drafted", "draft_content": draft_text}
+                    
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.patch(url, json=payload, headers=headers)
+                        if resp.status_code >= 400:
+                            print(f"[Drafter] HTTP PATCH failed: {resp.status_code} - {resp.text}")
+                        else:
+                            print(f"[Drafter] Successfully saved draft_content for case {case_id}")
                 except Exception as db_err:
                     print(f"[Drafter] DB update error: {db_err}")
 
@@ -243,12 +254,18 @@ LEGAL SECTIONS VIOLATED:
 
             if self.supabase and case_id:
                 try:
-                    result = self.supabase.table('cases').update({
-                        'status': 'drafted',
-                        'draft_content': draft_text,
-                    }).eq('id', case_id)
-                    if hasattr(result, 'execute'):
-                        result.execute()
+                    import httpx
+                    import os
+                    url = f"{os.getenv('SUPABASE_URL')}/rest/v1/cases?id=eq.{case_id}"
+                    headers = {
+                        "apikey": os.getenv("SUPABASE_KEY"),
+                        "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal"
+                    }
+                    payload = {"status": "drafted", "draft_content": draft_text}
+                    async with httpx.AsyncClient() as client:
+                        await client.patch(url, json=payload, headers=headers)
                 except Exception:
                     pass
 

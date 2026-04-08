@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Download, PenLine, FileText, Loader2, Sparkles, CheckCircle } from "lucide-react";
+import { Download, PenLine, FileText, Loader2, Sparkles, CheckCircle, Maximize2, X } from "lucide-react";
 import { Button } from "./ui/Button";
 import { useAuth } from "../contexts/AuthContext";
 import { api } from "../services/api";
@@ -9,6 +9,7 @@ const DocumentPanel = ({ caseId, readyToDraft }) => {
   const [draftContent, setDraftContent] = useState("");
   const [isDrafting, setIsDrafting] = useState(false);
   const [loadingCase, setLoadingCase] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Load existing draft if any
   useEffect(() => {
@@ -70,17 +71,28 @@ const DocumentPanel = ({ caseId, readyToDraft }) => {
   }
 
   return (
-    <div className="flex flex-col h-full bg-background relative overflow-hidden">
+    <div className={`flex flex-col bg-background relative overflow-hidden ${isFullscreen ? 'fixed inset-0 z-50 w-full h-full' : 'h-full'}`}>
       <div className="px-4 py-3 border-b border-border bg-card/50 backdrop-blur-sm z-10 flex justify-between items-center">
         <div>
           <h2 className="text-sm font-semibold text-foreground">Document Workspace</h2>
           <p className="text-xs text-muted-foreground">Auto-generated FIR Draft</p>
         </div>
-        {draftContent && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-success/10 text-success">
-            <CheckCircle className="h-3 w-3" /> Ready
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {draftContent && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-success/10 text-success">
+              <CheckCircle className="h-3 w-3" /> Ready
+            </span>
+          )}
+          {draftContent && (
+            <button 
+              onClick={() => setIsFullscreen(!isFullscreen)}
+              className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-md transition-colors"
+              title={isFullscreen ? "Close Fullscreen" : "Fullscreen View"}
+            >
+              {isFullscreen ? <X className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </button>
+          )}
+        </div>
       </div>
 
       {loadingCase ? (
