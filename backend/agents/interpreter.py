@@ -41,32 +41,38 @@ Rules:
 - If context doesn't have a directly matching section, say so honestly, cite what IS there, and proceed.
 
 ═══ FIR INFORMATION TO COLLECT ═══
-Before marking [READY_TO_DRAFT], collect ALL of:
-  • Complainant's full name
-  • Complete address
-  • Phone number
-  • Exact date and time of the incident
-  • Exact location of the incident
+Ideally, before marking [READY_TO_DRAFT], collect:
+  • Exact date, time, and location of the incident
   • Full description of what happened (who, what, when, where, how)
   • Name/description of the accused
   • Any witnesses (or confirm none)
   • Evidence available (photos, messages, receipts, etc.)
-  • Specific relief sought
+
+DO NOT ASK FOR THE COMPLAINANT'S NAME OR EMAIL. The system already has their registered profile data.
+
+═══ FLEXIBLE DRAFTING RULE (CRITICAL) ═══
+You do NOT need to force the user to answer every single question. 
+Once you have the VERY basic incident details (what happened, date, location) and 2-3 initial questions are answered, you MUST explicitly ask: 
+"We have enough to start. Would you like me to generate a draft FIR now, or should we add more details like witnesses?"
+
+CRITICAL RULE: YOU MUST NEVER DRAFT THE ACTUAL FIR YOURSELF.
+If the user says "draft it", "yes", or explicitly asks to generate the FIR, YOU MUST STOP ASKING QUESTIONS. 
+DO NOT ASK FOR ANY MORE INFORMATION. 
+Your entire response MUST be exactly this (no other text, no draft):
+"I have forwarded your information to the Document Workspace. Click 'Generate FIR Draft' on the right panel to proceed. [READY_TO_DRAFT]"
 
 ═══ CONVERSATION RULES ═══
 - Ask for 3-4 missing details per reply.
 - Questions should be warm and short — conversational, not bureaucratic.
 - Do NOT use bold headers for questions. Use a simple numbered list.
-- Never re-ask for information already provided.
-- End with [READY_TO_DRAFT] when all info is collected.
+- End with [READY_TO_DRAFT] when all info is collected OR if the user asks you to draft it now.
 - End with [NEEDS_CLARIFICATION] when still gathering.
 
 ═══ RESPONSE STRUCTURE ═══
 1. Empathetic acknowledgment (2-3 lines) — validate their pain and be clear this is illegal/wrong
 2. Legal citations with 📌 format including filename (from context only)
 3. Brief plain-language explanation of what these laws mean for their case (2-3 lines)
-4. 3-4 warm, friendly questions for the next missing FIR details
-5. One reassuring sentence: "Once I have all the details, I'll help you build a strong FIR."
+4. Next questions (or the offer to draft if enough info is gathered)
 """
 
 # Minimum similarity score to include a chunk in context
@@ -189,8 +195,8 @@ class InterpreterAgent:
         if key not in self.chat_sessions:
             print(f"[Session] Creating new session for {key}")
 
-            # Load last 8 messages from DB to seed history
-            history = await self._load_history_as_gemini_content(user_id, case_id, limit=8)
+            # Load last 40 messages from DB to seed history so Drafter has full context
+            history = await self._load_history_as_gemini_content(user_id, case_id, limit=40)
 
             chat = self.model.start_chat(history=history)
             msg_count = len([h for h in history if h.role == "user"])
@@ -204,7 +210,7 @@ class InterpreterAgent:
         return self.chat_sessions[key]
 
     async def _load_history_as_gemini_content(
-        self, user_id: str, case_id: str, limit: int = 8
+        self, user_id: str, case_id: str, limit: int = 40
     ) -> List[Content]:
         """Load the last N messages from DB and convert to Gemini Content objects."""
         try:
@@ -223,31 +229,21 @@ class InterpreterAgent:
     async def _fetch_db_messages(self, user_id: str, case_id: str, limit: int = 50) -> List[Dict]:
         """Fetch recent chat messages from DB for a given case."""
         try:
-            # Try RPC first (preserves order)
-            response = self.supabase.rpc(
-                'get_chat_history',
-                {'p_case_id': case_id, 'p_user_id': user_id, 'message_limit': limit}
+            # Direct table query (much faster and no RPC timeouts)
+            response = (
+                self.supabase
+                .table('chat_messages')
+                .select('*')
+                .eq('case_id', case_id)
+                .eq('user_id', user_id)
+                .order('created_at', desc=False)
+                .limit(limit)
+                .execute()
             )
-            if hasattr(response, 'execute') and callable(response.execute):
-                response = response.execute()
             return response.data if response.data else []
-        except Exception:
-            # Fallback: direct table query
-            try:
-                response = (
-                    self.supabase
-                    .table('chat_messages')
-                    .select('*')
-                    .eq('case_id', case_id)
-                    .eq('user_id', user_id)
-                    .order('created_at', desc=False)
-                    .limit(limit)
-                    .execute()
-                )
-                return response.data if response.data else []
-            except Exception as e2:
-                print(f"[DB] Fallback history fetch failed: {e2}")
-                return []
+        except Exception as e:
+            print(f"[DB] History fetch failed: {e}")
+            return []
 
     def clear_chat_session(self, user_id: str, case_id: Optional[str] = None):
         key = self._session_key(user_id, case_id or "")
@@ -257,7 +253,7 @@ class InterpreterAgent:
     # RESPONSE PARSING
     # ─────────────────────────────────────────────────────────────────────────
     def _check_ready_to_draft(self, text: str) -> bool:
-        return "[READY_TO_DRAFT]" in text
+        return "[READY_TO_DRAFT]" in text or "FIRST INFORMATION REPORT" in text.upper() or "STATION HOUSE OFFICER" in text.upper()
 
     def _check_needs_clarification(self, text: str) -> bool:
         if self._check_ready_to_draft(text):
@@ -265,7 +261,9 @@ class InterpreterAgent:
         return "[NEEDS_CLARIFICATION]" in text or "?" in text
 
     def _clean_response(self, text: str) -> str:
-        return text.replace("[READY_TO_DRAFT]", "").replace("[NEEDS_CLARIFICATION]", "").strip()
+        if "[READY_TO_DRAFT]" in text or "FIRST INFORMATION REPORT" in text.upper() or "STATION HOUSE OFFICER" in text.upper():
+            return "I have forwarded your information to the Document Workspace. Please click the **Generate FIR Draft** button on the right panel to proceed."
+        return text.replace("[NEEDS_CLARIFICATION]", "").strip()
 
     # ─────────────────────────────────────────────────────────────────────────
     # MAIN CHAT
@@ -295,6 +293,20 @@ class InterpreterAgent:
             chat = session["chat"]
             session["message_count"] += 1
             msg_num = session["message_count"]
+
+            # ── Check if user is forcefully asking to draft ──────────────────
+            user_msg_lower = message.lower()
+            draft_triggers = ["draft it", "draft the fir", "generate draft", "yes draft", "now draft"]
+            if any(trigger in user_msg_lower for trigger in draft_triggers):
+                bot_reply = "I have forwarded your information to the Document Workspace. Please click the **Generate FIR Draft** button on the right panel to proceed. [READY_TO_DRAFT]"
+                return {
+                    "message": self._clean_response(bot_reply),
+                    "relevant_laws": [],
+                    "laws_details": [],
+                    "citations": [],
+                    "needs_clarification": False,
+                    "ready_to_draft": True
+                }
 
             # ── RAG ──────────────────────────────────────────────────────────
             relevant_laws = await self.retrieve_relevant_laws(message, top_k=7)
@@ -490,12 +502,15 @@ class InterpreterAgent:
     async def summarize_conversation(self, user_id: str, case_id: Optional[str] = None) -> Dict:
         if not case_id:
             return {"summary": "No case ID provided", "key_points": [], "legal_sections": []}
-        key = self._session_key(user_id, case_id)
-        if key not in self.chat_sessions:
-            return {"summary": "Session not found — may need to reload", "key_points": [], "legal_sections": []}
-
+            
         try:
-            chat = self.chat_sessions[key]["chat"]
+            # Force load the session from DB if it doesn't exist in memory
+            # This is critical because /api/generate-draft creates a new InterpreterAgent
+            session = await self.get_or_create_chat_session(user_id, case_id)
+            if not session or "chat" not in session:
+                 return {"summary": "Session not found — may need to reload", "key_points": [], "legal_sections": []}
+                 
+            chat = session["chat"]
             prompt = (
                 'Summarize this legal intake conversation as JSON for the FIR drafter. '
                 'Return ONLY valid JSON — no markdown, no extra text:\n'
@@ -505,10 +520,24 @@ class InterpreterAgent:
                 '"legal_sections":[],"relief_sought":"","ready_for_fir":false}'
             )
             response = chat.send_message(prompt)
+            
+            # Clean possible markdown block
+            raw_text = response.text.strip()
+            if raw_text.startswith("```json"):
+                raw_text = raw_text[7:]
+            if raw_text.startswith("```"):
+                raw_text = raw_text[3:]
+            if raw_text.endswith("```"):
+                raw_text = raw_text[:-3]
+            raw_text = raw_text.strip()
+            
             try:
-                return json.loads(response.text)
+                import json
+                return json.loads(raw_text)
             except json.JSONDecodeError:
                 return {"summary": response.text, "key_points": [], "legal_sections": []}
         except Exception as e:
             print(f"[Summary] Error: {e}")
+            import traceback
+            traceback.print_exc()
             return {"summary": "Error generating summary", "key_points": [], "legal_sections": []}

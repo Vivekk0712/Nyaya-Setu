@@ -280,10 +280,60 @@ async def update_case_status(case_id: str, status: str, current_user: dict = Dep
         if status == 'filed':
             update_data['filed_at'] = datetime.now().isoformat()
         
-        response = db.table('cases').update(update_data).eq('id', case_id).eq('user_id', current_user['id'])
+        response = db.table('cases').update(update_data).eq('id', case_id).eq('user_id', current_user['id']).execute()
         return {"success": True, "case": response.data}
     except Exception as e:
         print(f"Update case error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/generate-draft", response_model=DraftResponse)
+async def generate_draft(request: DraftRequest, current_user: dict = Depends(get_current_user)):
+    """Agent 2: Generate formal legal draft from case details"""
+    try:
+        from agents.drafter import DraftingAgent
+        from agents.interpreter import InterpreterAgent
+        
+        # 1. Fetch case to ensure it exists and belongs to user
+        case_response = db.table('cases').select('*').eq('id', request.case_id).eq('user_id', current_user['id']).execute()
+        
+        if not case_response.data:
+            raise HTTPException(status_code=404, detail="Case not found")
+            
+        case_data = case_response.data[0]
+        
+        # 2. Get conversation summary from Interpreter
+        interpreter = InterpreterAgent(db)
+        summary = await interpreter.summarize_conversation(str(current_user['id']), request.case_id)
+        
+        # 3. Generate draft using the summary
+        drafter = DraftingAgent(db)
+        
+        # The frontend sends user_kyc, but current_user has id, email, full_name
+        # We can merge them
+        user_info = {
+            **current_user,
+            **(request.user_kyc or {})
+        }
+        
+        draft_result = await drafter.draft_from_summary(
+            summary=summary, 
+            case_id=request.case_id, 
+            user=user_info,
+            db_legal_sections=case_data.get('legal_sections', [])
+        )
+        
+        if not draft_result.get("success"):
+            raise HTTPException(status_code=500, detail="Failed to generate draft text")
+            
+        return DraftResponse(
+            draft_text=draft_result["draft_text"],
+            pdf_url="",  # Can be implemented later
+            case_id=request.case_id
+        )
+    except Exception as e:
+        print(f"Generate draft error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
