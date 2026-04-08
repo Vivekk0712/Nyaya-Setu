@@ -4,6 +4,7 @@ import { NavLink as RouterNavLink, useLocation, useNavigate } from "react-router
 import { Button } from "./ui/Button";
 import { useAuth } from "../contexts/AuthContext";
 import { api } from "../services/api";
+import { useTranslation } from "react-i18next";
 
 const navLinks = [
   { to: "/dashboard", label: "Dashboard" },
@@ -14,12 +15,16 @@ const navLinks = [
 ];
 
 const Navbar = () => {
-  const [lang, setLang] = useState("en");
+  const { t, i18n } = useTranslation();
   const [digiConnected, setDigiConnected] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  
+  const handleLangChange = (lng) => {
+    i18n.changeLanguage(lng);
+  };
 
   // Check admin status
   useEffect(() => {
@@ -56,39 +61,55 @@ const Navbar = () => {
         </div>
 
         <div className="flex items-center gap-2 md:gap-3">
-          <div className="flex rounded-full border border-border bg-secondary p-0.5 text-sm font-medium">
+          <div className="flex rounded-full border border-border bg-secondary p-0.5 text-xs font-medium overflow-x-auto max-w-[200px] md:max-w-none scrollbar-none">
             <button
-              onClick={() => setLang("en")}
-              className={`px-3 py-1 rounded-full transition-colors ${
-                lang === "en" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+              onClick={() => handleLangChange("en")}
+              className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${
+                i18n.language === "en" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
               }`}
             >
               EN
             </button>
             <button
-              onClick={() => setLang("hi")}
-              className={`px-3 py-1 rounded-full transition-colors ${
-                lang === "hi" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+              onClick={() => handleLangChange("hi")}
+              className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${
+                i18n.language === "hi" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
               }`}
             >
               हिंदी
+            </button>
+            <button
+              onClick={() => handleLangChange("ta")}
+              className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${
+                i18n.language === "ta" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              தமிழ்
+            </button>
+            <button
+              onClick={() => handleLangChange("kn")}
+              className={`px-3 py-1 rounded-full transition-colors whitespace-nowrap ${
+                i18n.language === "kn" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              ಕನ್ನಡ
             </button>
           </div>
 
           {digiConnected ? (
             <div className="hidden sm:flex items-center gap-1.5 text-sm font-medium text-success">
               <ShieldCheck className="h-4 w-4" />
-              <span>Verified: {user?.name || "User"}</span>
+              <span>{t('Verified')}: {user?.name || "User"}</span>
             </div>
           ) : (
             <Button
               size="sm"
               variant="outline"
               onClick={() => setDigiConnected(true)}
-              className="pulse-gentle gap-1.5"
+              className="pulse-gentle gap-1.5 hidden sm:flex shrink-0"
             >
               <LinkIcon className="h-4 w-4" />
-              <span className="hidden sm:inline">Connect DigiLocker</span>
+              <span>{t('Connect DigiLocker')}</span>
             </Button>
           )}
 
@@ -99,7 +120,7 @@ const Navbar = () => {
             className="gap-1.5"
           >
             <LogOut className="h-4 w-4" />
-            <span className="hidden sm:inline">Logout</span>
+            <span className="hidden sm:inline">{t('Logout')}</span>
           </Button>
         </div>
       </div>
@@ -122,7 +143,7 @@ const Navbar = () => {
               }`}
             >
               {Icon && <Icon className="h-4 w-4" />}
-              {link.label}
+              {t(link.label)}
             </RouterNavLink>
           );
         })}

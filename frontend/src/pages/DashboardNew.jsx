@@ -13,6 +13,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { useAuth } from "../contexts/AuthContext";
 import { api } from "../services/api";
+import { useTranslation } from "react-i18next";
 
 const statusBadge = (status) => {
   if (status === "intake" || status === "drafted")
@@ -37,6 +38,7 @@ const statusBadge = (status) => {
 const DashboardNew = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { t } = useTranslation();
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -60,10 +62,10 @@ const DashboardNew = () => {
   const nudgesSent = 0; // Mock stat for now since nudge features are upcoming
 
   const stats = [
-    { label: "Total Cases", value: totalCases, icon: FileText, color: "text-blue-500", bg: "bg-blue-50 border-blue-200" },
-    { label: "Active", value: activeCases, icon: Clock, color: "text-amber-500", bg: "bg-amber-50 border-amber-200" },
-    { label: "Filed", value: resolvedCases, icon: CheckCircle2, color: "text-emerald-500", bg: "bg-emerald-50 border-emerald-200" },
-    { label: "Nudges Sent", value: nudgesSent, icon: TrendingUp, color: "text-purple-500", bg: "bg-purple-50 border-purple-200" },
+    { label: t("Total Cases"), value: totalCases, icon: FileText, color: "text-blue-500", bg: "bg-blue-50 border-blue-200" },
+    { label: t("Active"), value: activeCases, icon: Clock, color: "text-amber-500", bg: "bg-amber-50 border-amber-200" },
+    { label: t("Filed"), value: resolvedCases, icon: CheckCircle2, color: "text-emerald-500", bg: "bg-emerald-50 border-emerald-200" },
+    { label: t("Nudges Sent"), value: nudgesSent, icon: TrendingUp, color: "text-purple-500", bg: "bg-purple-50 border-purple-200" },
   ];
 
   const recentCases = cases
@@ -80,15 +82,15 @@ const DashboardNew = () => {
           <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
             <div>
               <h1 className="text-3xl md:text-4xl font-extrabold text-white mb-2 tracking-tight">
-                Welcome back, {user?.name || user?.full_name || "User"}
+                {t("Welcome back")}, {user?.name || user?.full_name || "User"}
               </h1>
               <p className="text-slate-300 text-sm md:text-base max-w-lg font-medium">
-                Your AI Legal Assistant has synced your cases. You have <strong className="text-white">{activeCases} active</strong> drafts awaiting action.
+                {t("Your AI Legal Assistant has synced your cases. You have")} <strong className="text-white">{activeCases} {t("active")}</strong> {t("drafts awaiting action.")}
               </p>
             </div>
             <Button size="lg" onClick={() => navigate("/new-case")} className="gap-2 shrink-0 bg-white text-slate-900 hover:bg-slate-100 shadow-xl transition-transform hover:scale-105">
               <Scale className="h-5 w-5" />
-              File New Case
+              {t("File New Case")}
             </Button>
           </div>
         </div>
@@ -126,13 +128,13 @@ const DashboardNew = () => {
                 <div className="h-24 w-24 bg-primary/5 rounded-full flex items-center justify-center mx-auto mb-6">
                   <Scale className="h-12 w-12 text-primary" />
                 </div>
-                <h3 className="text-2xl font-bold text-slate-900 mb-3">Get Started with Nyaya-Setu</h3>
+                <h3 className="text-2xl font-bold text-slate-900 mb-3">{t("Get Started with Nyaya-Setu")}</h3>
                 <p className="text-slate-500 max-w-md mx-auto mb-8 leading-relaxed">
-                  Your AI-powered legal assistant is fully configured and ready to help you magically draft a professional FIR.
+                  {t("Your AI-powered legal assistant is fully configured and ready to help you magically draft a professional FIR.")}
                 </p>
                 <Button size="lg" onClick={() => navigate("/new-case")} className="gap-2 shadow-lg hover:shadow-primary/25">
                   <ArrowRight className="h-5 w-5" />
-                  Start Initial Assessment
+                  {t("Start Initial Assessment")}
                 </Button>
               </div>
             )}
@@ -141,12 +143,12 @@ const DashboardNew = () => {
             {cases.length > 0 && (
               <div className="bg-white rounded-3xl border border-border shadow-sm overflow-hidden">
                 <div className="p-6 border-b border-border flex items-center justify-between bg-slate-50/50">
-                  <h2 className="text-xl font-bold text-slate-900">Recent Filings</h2>
+                  <h2 className="text-xl font-bold text-slate-900">{t("Recent Filings")}</h2>
                   <button
                     onClick={() => navigate("/cases")}
                     className="text-sm text-primary font-bold flex items-center gap-1 hover:underline transition-all hover:gap-2"
                   >
-                    View All Vault <ArrowRight className="h-4 w-4" />
+                    {t("View All Vault")} <ArrowRight className="h-4 w-4" />
                   </button>
                 </div>
                 <div className="divide-y divide-border">
@@ -165,10 +167,10 @@ const DashboardNew = () => {
                           {c.incident_description?.substring(0, 80) || "No description provided"}...
                         </p>
                         <p className="text-sm font-medium text-slate-500">
-                           Identified Sections: {c.legal_sections && c.legal_sections.length > 0 ? (
+                           {t("Identified Sections")}: {c.legal_sections && c.legal_sections.length > 0 ? (
                             <span className="text-slate-700 font-semibold">{c.legal_sections.join(', ')}</span>
                           ) : (
-                            <span className="italic">Scanning in progress</span>
+                            <span className="italic">{t("Scanning in progress")}</span>
                           )}
                         </p>
                       </div>
