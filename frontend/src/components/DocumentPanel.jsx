@@ -112,12 +112,12 @@ const DocumentPanel = ({ caseId, readyToDraft }) => {
 
   const handleEmailOfficer = async () => {
     if (!caseId) return;
-    const email = window.prompt("Enter the Officer's Email ID to send this Draft:", user?.email || "");
-    if (!email) return;
     try {
       setIsEmailing(true);
-      await api.emailDraft(caseId, email);
-      alert("Email dispatched successfully! Check backend console for mock logs if SMTP is not configured.");
+      // Send directly to the registered user's email acting as the officer for testing
+      const targetEmail = user?.email || "officer@police.gov.in";
+      await api.emailDraft(caseId, targetEmail);
+      alert(`Email dispatched successfully to ${targetEmail}! Check backend console if SMTP is unconfigured.`);
     } catch (err) {
       console.error("Failed to email draft:", err);
       alert("Failed to email draft. Please check console.");
