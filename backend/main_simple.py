@@ -39,7 +39,7 @@ app = FastAPI(title="Nyaya-Setu API", version="2.0.0")
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "https://nyaya-setu-in.netlify.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

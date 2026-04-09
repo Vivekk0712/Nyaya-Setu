@@ -27,7 +27,10 @@ export const AuthProvider = ({ children }) => {
   const signUp = async (email, password, fullName) => {
     const response = await fetch(`${API_BASE}/api/auth/signup`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true'
+      },
       body: JSON.stringify({ email, password, full_name: fullName })
     })
     
@@ -51,7 +54,10 @@ export const AuthProvider = ({ children }) => {
   const signIn = async (email, password) => {
     const response = await fetch(`${API_BASE}/api/auth/login`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true'
+      },
       body: JSON.stringify({ email, password })
     })
     
