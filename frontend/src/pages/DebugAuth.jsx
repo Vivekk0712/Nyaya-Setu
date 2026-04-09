@@ -36,7 +36,8 @@ export default function DebugAuth() {
           <button
             onClick={async () => {
               try {
-                const response = await fetch('http://localhost:8000/api/cases', {
+                const API_BASE = import.meta.env.VITE_API_BASE_URL || (window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'https://sempiternal-carey-uninnately.ngrok-free.dev')
+                const response = await fetch(`${API_BASE}/api/cases`, {
                   headers: {
                     'Authorization': `Bearer ${token}`
                   }
