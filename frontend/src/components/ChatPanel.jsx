@@ -17,7 +17,13 @@ const ChatPanel = ({ caseId, onCaseCreated, onReadyToDraft }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [currentCaseId, setCurrentCaseId] = useState(caseId);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [expandedCitations, setExpandedCitations] = useState({});
   const messagesEndRef = useRef(null);
+
+  const toggleCitation = (msgId, idx) => {
+    const key = `${msgId}-${idx}`;
+    setExpandedCitations(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -190,22 +196,38 @@ const ChatPanel = ({ caseId, onCaseCreated, onReadyToDraft }) => {
                 <div className="mt-2 pt-2 border-t border-border/30">
                   <p className="text-xs font-semibold mb-1.5 text-muted-foreground">Referenced Sections:</p>
                   <div className="flex flex-col gap-1.5">
-                    {(msg.citations?.length > 0 ? msg.citations : msg.relevant_laws.map(l => ({ section: l, source: null }))).map((c, idx) => (
+                    {(msg.citations?.length > 0 ? msg.citations : msg.relevant_laws.map(l => ({ section: l, source: null }))).map((c, idx) => {
+                      const isExpanded = expandedCitations[`${msg.id}-${idx}`];
+                      return (
                       <div
                         key={idx}
-                        className="flex items-start gap-1.5 text-xs px-2 py-1 bg-primary/10 text-primary rounded-lg"
+                        onClick={() => toggleCitation(msg.id, idx)}
+                        className="flex flex-col text-xs px-2 py-1.5 bg-primary/10 text-primary rounded-lg cursor-pointer hover:bg-primary/20 transition-colors"
+                        title="Click to view summary"
                       >
-                        <span className="mt-0.5">📌</span>
-                        <div>
-                          <span className="font-semibold">{c.section || c}</span>
-                          {c.source && (
-                            <span className="block text-[10px] text-muted-foreground italic mt-0.5">
-                              {c.source}
-                            </span>
-                          )}
+                        <div className="flex items-start gap-1.5">
+                          <span className="mt-0.5">📌</span>
+                          <div>
+                            <span className="font-semibold">{c.section || c}</span>
+                            {c.source && (
+                              <span className="block text-[10px] text-muted-foreground italic mt-0.5">
+                                {c.source}
+                              </span>
+                            )}
+                          </div>
                         </div>
+                        {isExpanded && c.snippet && (
+                          <div className="mt-2 text-foreground/80 pl-5 pr-1 pb-1 border-t border-primary/20 pt-1.5 leading-relaxed">
+                            {c.snippet}
+                          </div>
+                        )}
+                        {isExpanded && !c.snippet && (
+                           <div className="mt-2 text-foreground/60 pl-5 pr-1 pb-1 border-t border-primary/20 pt-1.5 italic">
+                             No summary available for this section.
+                           </div>
+                        )}
                       </div>
-                    ))}
+                    )})}
                   </div>
                 </div>
               )}

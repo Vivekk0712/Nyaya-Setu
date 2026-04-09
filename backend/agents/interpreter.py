@@ -166,7 +166,7 @@ class InterpreterAgent:
             section = meta.get('section', 'Unknown')
             doc_type = meta.get('doc_type', '')
             filename = meta.get('filename', '')
-            content_snippet = law.get('content', '')[:150].replace('\n', ' ')
+            content_snippet = law.get('content', '').strip()
             key = f"{section}|{filename}"
             if key not in seen:
                 seen.add(key)
